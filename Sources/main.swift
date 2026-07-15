@@ -157,8 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.imagePosition = .imageOnly
         if let pinned {
             let state = usage[pinned.id]
-            button.image = Render.statusText(provider: pinned.provider, usage: state?.usage,
-                                             stale: state?.isStale ?? false)
+            button.image = Render.statusText(usage: state?.usage, stale: state?.isStale ?? false)
             if let snapshot = state?.usage {
                 let values = snapshot.windows.map { String(format: "%@ %.0f%%", $0.label, $0.usedPercent) }
                     .joined(separator: ", ")
@@ -167,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 button.toolTip = "\(pinned.provider.title) — \(pinned.name) — no usage yet"
             }
         } else {
-            button.image = Render.statusText(provider: .claude, usage: nil, stale: false)
+            button.image = Render.statusText(usage: nil, stale: false)
             button.toolTip = "Usage Bar — add an account"
         }
     }
@@ -198,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         for (providerIndex, provider) in Provider.allCases.enumerated() {
             if providerIndex > 0 { menu.addItem(.separator()) }
-            let heading = NSMenuItem(title: provider.title.uppercased(), action: nil, keyEquivalent: "")
+            let heading = NSMenuItem(title: provider.title, action: nil, keyEquivalent: "")
             heading.isEnabled = false
             menu.addItem(heading)
             let providerProfiles = profiles.filter { $0.provider == provider }
@@ -233,8 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func accountItem(_ profile: AccountProfile, activeClaude: String?) -> NSMenuItem {
         let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
         item.representedObject = profile.id
-        item.attributedTitle = Render.accountTitle(profile: profile, state: usage[profile.id],
-            activeClaude: activeClaude, pinned: profile.id == pinnedID)
+        item.attributedTitle = Render.accountTitle(profile: profile, state: usage[profile.id])
+        item.state = profile.provider == .claude && profile.name == activeClaude ? .on : .off
+        if profile.id == pinnedID { item.toolTip = "Shown in the menu bar" }
         let submenu = NSMenu()
 
         let pin = NSMenuItem(title: "Show in menu bar", action: #selector(pinAccount(_:)), keyEquivalent: "")
@@ -297,8 +297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let activeClaude = AccountStore.activeClaudeAccount()
         for item in menu.items {
             guard let id = item.representedObject as? String, let profile = profiles[id] else { continue }
-            item.attributedTitle = Render.accountTitle(profile: profile, state: usage[id],
-                activeClaude: activeClaude, pinned: id == pinnedID)
+            item.attributedTitle = Render.accountTitle(profile: profile, state: usage[id])
+            item.state = profile.provider == .claude && profile.name == activeClaude ? .on : .off
         }
     }
 
@@ -502,34 +502,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ("dark", NSAppearance.Name.darkAqua, NSColor(calibratedWhite: 0.10, alpha: 1)),
             ("light", NSAppearance.Name.aqua, NSColor(calibratedWhite: 0.94, alpha: 1)),
         ] {
-            let status = Render.statusText(provider: .claude, usage: demoUsage[demoProfiles[0].id]?.usage, stale: false)
+            let status = Render.statusText(usage: demoUsage[demoProfiles[0].id]?.usage, stale: false)
             bitmap(size: NSSize(width: status.size.width + 16, height: 28), appearance: appearance,
                    background: background, draw: { rect in
                 status.draw(at: NSPoint(x: 8, y: (rect.height - status.size.height) / 2),
                             from: .zero, operation: .sourceOver, fraction: 1)
             }, path: "/tmp/usage-bar-status-\(suffix).png")
 
-            let rows = demoProfiles.map { Render.accountTitle(profile: $0, state: demoUsage[$0.id],
-                activeClaude: "Personal", pinned: $0.provider == .claude) }
-            let sectionFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            let width: CGFloat = 420
+            let rows = demoProfiles.map { Render.accountTitle(profile: $0, state: demoUsage[$0.id]) }
+            let sectionFont = NSFont.systemFont(ofSize: 13, weight: .regular)
+            let width: CGFloat = 360
             let heights = rows.map { ceil($0.size().height) + 18 }
-            let totalHeight = heights.reduce(0, +) + 3 * 28 + 72
+            let totalHeight = heights.reduce(0, +) + 3 * 28 + 116
             bitmap(size: NSSize(width: width, height: totalHeight), appearance: appearance,
                    background: background, draw: { rect in
                 var y = rect.height - 26
                 for index in 0..<rows.count {
-                    let heading = NSAttributedString(string: demoProfiles[index].provider.title.uppercased(), attributes: [
+                    let heading = NSAttributedString(string: demoProfiles[index].provider.title, attributes: [
                         .font: sectionFont, .foregroundColor: NSColor.secondaryLabelColor])
                     heading.draw(at: NSPoint(x: 16, y: y)); y -= 24
-                    rows[index].draw(at: NSPoint(x: 24, y: y - rows[index].size().height + 10))
+                    if index == 0 {
+                        NSAttributedString(string: "✓", attributes: [
+                            .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+                        ]).draw(at: NSPoint(x: 10, y: y - 12))
+                    }
+                    rows[index].draw(at: NSPoint(x: 28, y: y - rows[index].size().height + 10))
                     y -= heights[index]
                 }
                 NSColor.separatorColor.setFill()
-                NSRect(x: 0, y: 57, width: width, height: 1).fill()
-                let footer = NSAttributedString(string: "Add account…     Refresh all     Launch at login ✓",
-                    attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-                footer.draw(at: NSPoint(x: 16, y: 28))
+                NSRect(x: 0, y: 96, width: width, height: 1).fill()
+                let footerAttributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+                ]
+                NSAttributedString(string: "Add account…", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 68))
+                NSAttributedString(string: "Refresh all", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 42))
+                NSAttributedString(string: "✓   Launch at login", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 16))
             }, path: "/tmp/usage-bar-menu-\(suffix).png")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.terminate(nil) }

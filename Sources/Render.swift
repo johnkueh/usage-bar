@@ -28,14 +28,15 @@ enum Render {
         return "\(max(1, difference / 60))m"
     }
 
-    static func statusText(provider: Provider, usage: ProviderUsage?, stale: Bool) -> NSImage {
+    static func statusText(usage: ProviderUsage?, stale: Bool) -> NSImage {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
         let dim: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
 
         func line(_ window: UsageWindow?) -> NSAttributedString {
             let result = NSMutableAttributedString()
             if let window {
-                result.append(NSAttributedString(string: "\(window.shortLabel):", attributes: dim))
+                let label = window.durationMinutes == 300 ? "S" : window.shortLabel
+                result.append(NSAttributedString(string: "\(label):", attributes: dim))
                 let valueColor: NSColor = window.usedPercent >= 90 ? .systemRed
                     : window.usedPercent >= 70 ? .systemOrange : .labelColor
                 result.append(NSAttributedString(string: String(format: "%.0f%%", window.usedPercent),
@@ -51,18 +52,13 @@ enum Render {
 
         let windows = usage?.windows.prefix(2).map { $0 } ?? []
         let lines = windows.isEmpty ? [line(nil)] : windows.map(line)
-        let mark = NSAttributedString(string: provider.statusMark,
-            attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .bold),
-                         .foregroundColor: NSColor.secondaryLabelColor])
-        let markWidth = ceil(mark.size().width) + 4
-        let textWidth = ceil(lines.map { $0.size().width }.max() ?? 8)
-        let image = NSImage(size: NSSize(width: markWidth + textWidth, height: 21), flipped: false) { _ in
-            mark.draw(at: NSPoint(x: 0, y: 5.5))
+        let textWidth = ceil(lines.map { $0.size().width }.max() ?? 8) + 1
+        let image = NSImage(size: NSSize(width: textWidth, height: 21), flipped: false) { _ in
             if lines.count == 1 {
-                lines[0].draw(at: NSPoint(x: markWidth, y: 5.5))
+                lines[0].draw(at: NSPoint(x: 0, y: 5.5))
             } else {
-                lines[0].draw(at: NSPoint(x: markWidth, y: 10.5))
-                lines[1].draw(at: NSPoint(x: markWidth, y: 0.5))
+                lines[0].draw(at: NSPoint(x: 0, y: 10.5))
+                lines[1].draw(at: NSPoint(x: 0, y: 0.5))
             }
             return true
         }
@@ -93,15 +89,11 @@ enum Render {
         return formatter.string(from: date)
     }
 
-    static func accountTitle(profile: AccountProfile, state: UsageState?, activeClaude: String?,
-                             pinned: Bool) -> NSAttributedString {
+    static func accountTitle(profile: AccountProfile, state: UsageState?) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
-        var name = profile.name
-        if profile.provider == .claude, profile.name == activeClaude { name += "  Active" }
-        if pinned { name += "  • Menu bar" }
-        result.append(NSAttributedString(string: name, attributes: [
+        result.append(NSAttributedString(string: profile.name, attributes: [
             .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
         ]))
@@ -116,14 +108,16 @@ enum Render {
         ]
 
         func gauge(_ window: UsageWindow) -> NSAttributedString {
-            let line = NSMutableAttributedString(string: "\(window.label) ", attributes: dim)
+            let label = window.durationMinutes == 300 ? "5h"
+                : window.durationMinutes == 10_080 ? "wk" : window.shortLabel.lowercased()
+            let line = NSMutableAttributedString(string: "\(label) ", attributes: dim)
             let attachment = NSTextAttachment()
             attachment.image = gaugeImage(window.usedPercent)
             attachment.bounds = CGRect(x: 0, y: 0.5, width: 36, height: 7)
             line.append(NSAttributedString(attachment: attachment))
             line.append(NSAttributedString(string: String(format: " %.0f%%", window.usedPercent), attributes: regular))
             let reset = resetText(window.resetsAt)
-            if !reset.isEmpty { line.append(NSAttributedString(string: "  \(reset)", attributes: dim)) }
+            if !reset.isEmpty { line.append(NSAttributedString(string: " \(reset)", attributes: dim)) }
             return line
         }
 
@@ -135,7 +129,8 @@ enum Render {
                 result.append(gauge(window))
             }
             if case .stale(_, let reason) = state {
-                result.append(NSAttributedString(string: "\nLast update kept — \(reason.lowercased())", attributes: dim))
+                let note = reason == "Token expired" ? "Token expired — refreshing…" : reason
+                result.append(NSAttributedString(string: "\n\(note)", attributes: dim))
             }
         case .unavailable(let reason):
             result.append(NSAttributedString(string: reason, attributes: dim))
