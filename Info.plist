@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>ClaudeUsage</string>
+	<string>UsageBar</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.johnkueh.claude-usage-bar</string>
 	<key>CFBundleName</key>
-	<string>Claude Usage</string>
+	<string>Usage Bar</string>
 	<key>CFBundleDisplayName</key>
-	<string>Claude Usage</string>
+	<string>Usage Bar</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSMinimumSystemVersion</key>

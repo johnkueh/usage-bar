@@ -9,112 +9,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var refreshing = false
     var heartbeating = false
     var menuOpen = false
-    var unknownLoginEmail: String?
+    var unknownClaudeEmail: String?
     let defaults = UserDefaults.standard
 
-    var autopilotOn: Bool {
-        get { defaults.bool(forKey: "autopilot") }
-        set { defaults.set(newValue, forKey: "autopilot") }
+    var pinnedID: String? {
+        get { defaults.string(forKey: "pinned-account-id") }
+        set { defaults.set(newValue, forKey: "pinned-account-id") }
     }
 
-    func applicationDidFinishLaunching(_ note: Notification) {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        migratePreferences()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = menu
         menu.delegate = self
         if let button = statusItem.button {
-            button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            button.imagePosition = .imageTrailing
             button.title = "·"
+            button.imagePosition = .imageOnly
         }
+        chooseDefaultPinIfNeeded()
         rebuildMenu()
         refresh()
 
         let timer = Timer(timeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
         timer.tolerance = 30
         RunLoop.main.add(timer, forMode: .common)
-
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self?.refresh() }
         }
 
-        // Verification hook: DEBUG_SHOOT=1 renders the status item and the open
-        // menu to PNGs in /tmp by capturing the app's own windows (no Screen
-        // Recording permission needed), then quits.
         if ProcessInfo.processInfo.environment["DEBUG_SHOOT"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.debugShoot() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.debugShoot() }
         }
-        // DEBUG_SWITCH=<name> exercises the real switch path then quits.
         if let target = ProcessInfo.processInfo.environment["DEBUG_SWITCH"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.performSwitch(to: target, reason: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6) { NSApp.terminate(nil) }
+                self?.performClaudeSwitch(to: target)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { NSApp.terminate(nil) }
             }
         }
     }
 
-    func debugShoot() {
-        // Offscreen capture can't reproduce vibrant menu/system text, so render
-        // the exact drawing primitives with a forced appearance — the same
-        // pixels the menu bar composites — at 3x for legibility.
-        func savePNG(_ draw: @escaping (NSRect) -> Void, size: NSSize,
-                     appearance: NSAppearance.Name, background: NSColor, to path: String) {
-            let scale: CGFloat = 3
-            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
-            rep.size = size
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
-                let rect = NSRect(origin: .zero, size: size)
-                background.setFill()
-                rect.fill()
-                draw(rect)
-            }
-            NSGraphicsContext.restoreGraphicsState()
-            try? rep.representation(using: .png, properties: [:])?
-                .write(to: URL(fileURLWithPath: path))
+    func migratePreferences() {
+        ["autopilot", "autopilot-last-switch", "autopilot-last-reason"].forEach {
+            defaults.removeObject(forKey: $0)
         }
+    }
 
-        let active = AccountStore.activeAccount()
-        let state = active.flatMap { usage[$0] }
-        var stale = false
-        if case .stale = state { stale = true }
-
-        let statusImage = Render.statusText(state?.usage, stale: stale)
-        let pad: CGFloat = 6
-        let statusSize = NSSize(width: statusImage.size.width + pad * 2, height: 24)
-        savePNG({ rect in
-            statusImage.draw(at: NSPoint(x: pad, y: (rect.height - statusImage.size.height) / 2),
-                             from: .zero, operation: .sourceOver, fraction: 1)
-        }, size: statusSize, appearance: .darkAqua,
-           background: NSColor(calibratedWhite: 0.1, alpha: 1), to: "/tmp/cub-status-dark.png")
-        savePNG({ rect in
-            statusImage.draw(at: NSPoint(x: pad, y: (rect.height - statusImage.size.height) / 2),
-                             from: .zero, operation: .sourceOver, fraction: 1)
-        }, size: statusSize, appearance: .aqua,
-           background: NSColor(calibratedWhite: 0.93, alpha: 1), to: "/tmp/cub-status-light.png")
-
-        for (index, name) in AccountStore.accounts().enumerated() {
-            let title = Render.accountTitle(name: name, state: usage[name])
-            let size = NSSize(width: title.size().width + 24, height: title.size().height + 12)
-            savePNG({ _ in
-                title.draw(at: NSPoint(x: 12, y: 6))
-            }, size: size, appearance: .darkAqua,
-               background: NSColor(calibratedWhite: 0.16, alpha: 1), to: "/tmp/cub-row-\(index)-\(name).png")
+    func chooseDefaultPinIfNeeded() {
+        let profiles = AccountStore.accounts()
+        if let pinnedID, profiles.contains(where: { $0.id == pinnedID }) { return }
+        if let active = AccountStore.activeClaudeAccount() {
+            pinnedID = AccountProfile.claude(active).id
+        } else {
+            pinnedID = profiles.first?.id
         }
-        let dump = menu.items.map { item -> String in
-            if item.isSeparatorItem { return "---" }
-            let text = (item.attributedTitle?.string ?? item.title).replacingOccurrences(of: "\n", with: " ⏎ ")
-            let state = item.state == .on ? " [✓]" : ""
-            let sub = item.submenu.map { " ▸ [" + $0.items.map(\.title).joined(separator: " | ") + "]" } ?? ""
-            return text + state + sub
-        }.joined(separator: "\n")
-        try? dump.write(toFile: "/tmp/cub-menu.txt", atomically: true, encoding: .utf8)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.terminate(nil) }
     }
 
     // MARK: - Refresh
@@ -122,30 +71,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() {
         guard !refreshing else { return }
         refreshing = true
-        let names = AccountStore.accounts()
-        let active = AccountStore.activeAccount()
+        let profiles = AccountStore.accounts()
+        let activeClaude = AccountStore.activeClaudeAccount()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             var result: [String: UsageState] = [:]
             var liveEmail: String?
-            var expiredInactive: [String] = []
+            var expiredClaude: [String] = []
 
-            for name in names {
-                guard let token = AccountStore.token(for: name) else {
-                    result[name] = self.fallback(name, "no token")
-                    continue
-                }
-                let (usage, error) = UsageAPI.fetchUsage(token: token)
-                if let usage {
-                    result[name] = .fresh(usage)
-                    UsageCache.save(name, usage)
+            for profile in profiles {
+                let (snapshot, error) = ProviderClient.fetch(profile)
+                if let snapshot {
+                    result[profile.id] = .fresh(snapshot)
+                    UsageCache.save(profile.id, snapshot)
+                    if profile.provider == .claude, profile.name == activeClaude,
+                       let token = AccountStore.claudeToken(for: profile.name) {
+                        liveEmail = UsageAPI.fetchClaudeEmail(token: token)
+                    }
                 } else {
-                    result[name] = self.fallback(name, error)
-                    if error == "token expired", name != active { expiredInactive.append(name) }
-                }
-                if name == active, case .fresh = result[name]! {
-                    liveEmail = UsageAPI.fetchEmail(token: token)
+                    result[profile.id] = self.fallback(profile.id, error)
+                    if profile.provider == .claude, error == "Token expired", profile.name != activeClaude {
+                        expiredClaude.append(profile.name)
+                    }
                 }
             }
 
@@ -153,75 +101,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.usage = result
                 self.lastRefresh = Date()
                 self.refreshing = false
-                self.reconcileEmail(liveEmail, active: active)
+                self.reconcileClaudeEmail(liveEmail, active: activeClaude)
+                self.chooseDefaultPinIfNeeded()
                 self.updateStatusButton()
                 self.rebuildMenu()
-                self.runAutopilot()
-                self.heartbeatIfNeeded(expiredInactive)
+                self.heartbeatClaudeIfNeeded(expiredClaude)
             }
         }
     }
 
-    func fallback(_ name: String, _ reason: String) -> UsageState {
-        if let cached = UsageCache.load(name) { return .stale(cached, reason) }
-        return .unavailable(reason == "token expired" ? "token expired — refreshing…" : reason)
+    func fallback(_ id: String, _ reason: String) -> UsageState {
+        if let cached = UsageCache.load(id) { return .stale(cached, reason) }
+        return .unavailable(reason)
     }
 
-    // An inactive account's access token expires (~daily) and the app is read-only
-    // on refresh tokens, so it can't renew it directly. Instead of making the user
-    // "switch once to refresh", run `claude-account refresh <name>` in the background:
-    // it briefly loads that account's snapshot and a tiny `claude -p` renews the token.
-    // Debounced per account so a permanently-dead token can't cause a hammer loop.
-    func heartbeatIfNeeded(_ names: [String]) {
+    func heartbeatClaudeIfNeeded(_ names: [String]) {
         guard !heartbeating else { return }
         let due = names.filter { name in
             guard let last = defaults.object(forKey: "heartbeat-\(name)") as? Date else { return true }
-            return Date().timeIntervalSince(last) >= 1200   // at most once / 20 min per account
+            return Date().timeIntervalSince(last) >= 1_200
         }
         guard !due.isEmpty else { return }
         heartbeating = true
         due.forEach { defaults.set(Date(), forKey: "heartbeat-\($0)") }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self else { return }
-            for name in due { _ = AccountStore.run(AccountStore.cli, ["refresh", name]) }
+            for name in due { _ = AccountStore.run(AccountStore.claudeCLI, ["refresh", name]) }
             DispatchQueue.main.async {
-                self.heartbeating = false
-                self.refresh()   // re-fetch now that the token should be live again
+                self?.heartbeating = false
+                self?.refresh()
             }
         }
     }
 
-    // Detect a login the app doesn't know: the live credential's email differs
-    // from every email we've seen. Offer to save it as a new account.
-    func reconcileEmail(_ liveEmail: String?, active: String?) {
+    func reconcileClaudeEmail(_ liveEmail: String?, active: String?) {
         guard let liveEmail, let active else { return }
-        let knownEmails = AccountStore.accounts().compactMap { defaults.string(forKey: "email-\($0)") }
+        let known = AccountStore.claudeAccounts().compactMap { defaults.string(forKey: "email-\($0)") }
         let activeEmail = defaults.string(forKey: "email-\(active)")
         if activeEmail == nil || activeEmail == liveEmail {
             defaults.set(liveEmail, forKey: "email-\(active)")
-            unknownLoginEmail = nil
-        } else if knownEmails.contains(liveEmail) {
-            unknownLoginEmail = nil   // a known account logged in outside the app; not new
+            unknownClaudeEmail = nil
+        } else if known.contains(liveEmail) {
+            unknownClaudeEmail = nil
         } else {
-            unknownLoginEmail = liveEmail
+            unknownClaudeEmail = liveEmail
         }
     }
 
-    // MARK: - Status bar (statusline format: S:NN%/<reset> over W:NN%/<reset>)
+    // MARK: - Status bar
 
     func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        let active = AccountStore.activeAccount()
-        let state = active.flatMap { usage[$0] }
-        var stale = false
-        if case .stale = state { stale = true }
+        let profiles = AccountStore.accounts()
+        let pinned = profiles.first { $0.id == pinnedID } ?? profiles.first
         button.title = ""
         button.imagePosition = .imageOnly
-        button.image = Render.statusText(state?.usage, stale: stale)
-        if let u = state?.usage {
-            button.toolTip = String(format: "%@ — 5h %.0f%%, wk %.0f%%", active ?? "?", u.fiveHourPct, u.sevenDayPct)
+        if let pinned {
+            let state = usage[pinned.id]
+            button.image = Render.statusText(provider: pinned.provider, usage: state?.usage,
+                                             stale: state?.isStale ?? false)
+            if let snapshot = state?.usage {
+                let values = snapshot.windows.map { String(format: "%@ %.0f%%", $0.label, $0.usedPercent) }
+                    .joined(separator: ", ")
+                button.toolTip = "\(pinned.provider.title) — \(pinned.name) — \(values)"
+            } else {
+                button.toolTip = "\(pinned.provider.title) — \(pinned.name) — no usage yet"
+            }
         } else {
-            button.toolTip = "Claude Usage — no data yet"
+            button.image = Render.statusText(provider: .claude, usage: nil, stale: false)
+            button.toolTip = "Usage Bar — add an account"
         }
     }
 
@@ -233,92 +180,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
-    func menuDidClose(_ menu: NSMenu) {
-        menuOpen = false
-    }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false }
 
     func rebuildMenu() {
-        // While the menu is tracking, update rows in place; a full rebuild
-        // would yank items out from under the highlight.
-        if menuOpen {
-            updateOpenMenu()
-            return
-        }
+        if menuOpen { updateOpenMenu(); return }
         menu.removeAllItems()
-        let active = AccountStore.activeAccount()
+        let profiles = AccountStore.accounts()
+        let activeClaude = AccountStore.activeClaudeAccount()
 
-        if let email = unknownLoginEmail {
-            let item = NSMenuItem(title: "New login detected — save \(email)…",
-                                  action: #selector(addAccount), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
+        if let email = unknownClaudeEmail {
+            let detected = NSMenuItem(title: "Save new Claude login — \(email)…",
+                                      action: #selector(addClaudeAccount), keyEquivalent: "")
+            detected.target = self
+            menu.addItem(detected)
             menu.addItem(.separator())
         }
 
-        if AccountStore.accounts().isEmpty {
-            let hint = NSMenuItem(title: "No saved accounts yet", action: nil, keyEquivalent: "")
-            hint.isEnabled = false
-            menu.addItem(hint)
-            let save = NSMenuItem(title: "Save Current Login…", action: #selector(addAccount), keyEquivalent: "")
-            save.target = self
-            menu.addItem(save)
-        }
-        for name in AccountStore.accounts() {
-            let item = NSMenuItem(title: name, action: #selector(switchAccount(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = name
-            item.attributedTitle = Render.accountTitle(name: name, state: usage[name])
-            item.state = name == active ? .on : .off
-            item.toolTip = name == active
-                ? (defaults.string(forKey: "email-\(name)") ?? "Active account")
-                : "Switch to \(name)"
-            menu.addItem(item)
+        for (providerIndex, provider) in Provider.allCases.enumerated() {
+            if providerIndex > 0 { menu.addItem(.separator()) }
+            let heading = NSMenuItem(title: provider.title.uppercased(), action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            menu.addItem(heading)
+            let providerProfiles = profiles.filter { $0.provider == provider }
+            if providerProfiles.isEmpty {
+                let empty = NSMenuItem(title: "No accounts added", action: nil, keyEquivalent: "")
+                empty.isEnabled = false
+                empty.indentationLevel = 1
+                menu.addItem(empty)
+            }
+            for profile in providerProfiles {
+                menu.addItem(accountItem(profile, activeClaude: activeClaude))
+            }
         }
 
         menu.addItem(.separator())
-
-        let autopilot = NSMenuItem(title: "Autopilot", action: #selector(toggleAutopilot), keyEquivalent: "")
-        autopilot.target = self
-        autopilot.state = autopilotOn ? .on : .off
-        autopilot.toolTip = defaults.string(forKey: "autopilot-last-reason")
-            ?? "Auto-switch to the account with more headroom when this one runs hot"
-        menu.addItem(autopilot)
-
-        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
+        menu.addItem(addAccountItem())
+        let refreshItem = NSMenuItem(title: refreshing ? "Refreshing…" : "Refresh all",
+                                     action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
+        refreshItem.isEnabled = !refreshing
         if let lastRefresh { refreshItem.toolTip = "Updated \(Render.shortTime(lastRefresh))" }
         menu.addItem(refreshItem)
 
-        let manage = NSMenuItem(title: "Manage Accounts", action: nil, keyEquivalent: "")
-        let sub = NSMenu()
-        let add = NSMenuItem(title: "Add Account…", action: #selector(addAccount), keyEquivalent: "")
-        add.target = self
-        sub.addItem(add)
-        for name in AccountStore.accounts() where name != active {
-            let remove = NSMenuItem(title: "Remove \(name)…", action: #selector(removeAccount(_:)), keyEquivalent: "")
-            remove.target = self
-            remove.representedObject = name
-            sub.addItem(remove)
-        }
-        sub.addItem(.separator())
-        let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.target = self
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        sub.addItem(login)
-        manage.submenu = sub
-        menu.addItem(manage)
-
+        let launch = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launch.target = self
+        launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(launch)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Usage Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    func accountItem(_ profile: AccountProfile, activeClaude: String?) -> NSMenuItem {
+        let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
+        item.representedObject = profile.id
+        item.attributedTitle = Render.accountTitle(profile: profile, state: usage[profile.id],
+            activeClaude: activeClaude, pinned: profile.id == pinnedID)
+        let submenu = NSMenu()
+
+        let pin = NSMenuItem(title: "Show in menu bar", action: #selector(pinAccount(_:)), keyEquivalent: "")
+        pin.target = self
+        pin.representedObject = profile.id
+        pin.state = profile.id == pinnedID ? .on : .off
+        submenu.addItem(pin)
+
+        if profile.provider == .claude, profile.name != activeClaude {
+            let switchItem = NSMenuItem(title: "Switch to this account", action: #selector(switchClaude(_:)), keyEquivalent: "")
+            switchItem.target = self
+            switchItem.representedObject = profile.name
+            submenu.addItem(switchItem)
+        }
+
+        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "")
+        refreshItem.target = self
+        submenu.addItem(refreshItem)
+
+        if !(profile.provider == .claude && profile.name == activeClaude) {
+            submenu.addItem(.separator())
+            let remove = NSMenuItem(title: "Remove account…", action: #selector(removeAccount(_:)), keyEquivalent: "")
+            remove.target = self
+            remove.representedObject = profile.id
+            submenu.addItem(remove)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    func addAccountItem() -> NSMenuItem {
+        let root = NSMenuItem(title: "Add account…", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let claude = NSMenuItem(title: "Add Claude Code account…", action: #selector(addClaudeAccount), keyEquivalent: "")
+        claude.target = self
+        submenu.addItem(claude)
+        submenu.addItem(.separator())
+        addProviderActions(.codex, to: submenu)
+        submenu.addItem(.separator())
+        addProviderActions(.grok, to: submenu)
+        root.submenu = submenu
+        return root
+    }
+
+    func addProviderActions(_ provider: Provider, to menu: NSMenu) {
+        let current = NSMenuItem(title: "Add current \(provider.title) login…",
+                                 action: #selector(addCurrentProvider(_:)), keyEquivalent: "")
+        current.target = self
+        current.representedObject = provider.rawValue
+        menu.addItem(current)
+        let another = NSMenuItem(title: "Sign in to another \(provider.title) account…",
+                                 action: #selector(addAnotherProvider(_:)), keyEquivalent: "")
+        another.target = self
+        another.representedObject = provider.rawValue
+        menu.addItem(another)
     }
 
     func updateOpenMenu() {
-        let active = AccountStore.activeAccount()
+        let profiles = Dictionary(uniqueKeysWithValues: AccountStore.accounts().map { ($0.id, $0) })
+        let activeClaude = AccountStore.activeClaudeAccount()
         for item in menu.items {
-            guard let name = item.representedObject as? String,
-                  item.action == #selector(switchAccount(_:)) else { continue }
-            item.attributedTitle = Render.accountTitle(name: name, state: usage[name])
-            item.state = name == active ? .on : .off
+            guard let id = item.representedObject as? String, let profile = profiles[id] else { continue }
+            item.attributedTitle = Render.accountTitle(profile: profile, state: usage[id],
+                activeClaude: activeClaude, pinned: id == pinnedID)
         }
     }
 
@@ -326,116 +306,233 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func refreshNow() { refresh() }
 
-    @objc func switchAccount(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String,
-              name != AccountStore.activeAccount() else { return }
-        performSwitch(to: name, reason: nil)
+    @objc func pinAccount(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        pinnedID = id
+        updateStatusButton()
+        rebuildMenu()
     }
 
-    func performSwitch(to name: String, reason: String?) {
+    @objc func switchClaude(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        performClaudeSwitch(to: name)
+    }
+
+    func performClaudeSwitch(to name: String) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let (ok, output) = AccountStore.switchTo(name)
+            let (ok, output) = AccountStore.switchClaude(to: name)
             DispatchQueue.main.async {
                 if ok {
-                    let detail = reason ?? "New sessions and agents now use \(name)"
-                    AccountStore.notify(title: "Claude account → \(name)", message: detail)
+                    AccountStore.notify(title: "Claude account switched",
+                                        message: "New sessions and agents now use \(name).")
                 } else {
-                    AccountStore.notify(title: "Claude account switch failed",
-                                        message: output.trimmingCharacters(in: .whitespacesAndNewlines))
+                    self?.errorAlert("Claude account switch failed", output.trimmingCharacters(in: .whitespacesAndNewlines))
                 }
                 self?.refresh()
             }
         }
     }
 
-    func runAutopilot() {
-        guard autopilotOn, let active = AccountStore.activeAccount() else { return }
-        let lastSwitch = defaults.object(forKey: "autopilot-last-switch") as? Date
-        guard let decision = Autopilot.decide(active: active, usage: usage, lastSwitch: lastSwitch) else { return }
-        defaults.set(Date(), forKey: "autopilot-last-switch")
-        defaults.set(decision.reason, forKey: "autopilot-last-reason")
-        performSwitch(to: decision.target, reason: decision.reason)
-    }
-
-    @objc func toggleAutopilot() {
-        autopilotOn.toggle()
-        rebuildMenu()
-        if autopilotOn { runAutopilot() }
-    }
-
-    @objc func addAccount() {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Save the current login as an account"
-        alert.informativeText = unknownLoginEmail.map { "Live login: \($0)\n\nName this account (e.g. personal, work)." }
-            ?? "First /login as the account in any Claude session, then name it here. The live login will be saved under this name."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        field.placeholderString = "account name"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !name.isEmpty, name.range(of: "^[a-z0-9_-]+$", options: .regularExpression) != nil else {
-            errorAlert("Account names use letters, numbers, dashes.")
+    @objc func addClaudeAccount() {
+        guard let name = askForName(title: "Add Claude Code account",
+            detail: unknownClaudeEmail.map { "Current login: \($0)" }
+                ?? "Sign in with Claude Code first, then save the current login here.") else { return }
+        guard !AccountStore.claudeAccounts().contains(name) else {
+            errorAlert("Account already added", "A Claude Code account named \(name) already exists.")
             return
         }
-        guard !AccountStore.accounts().contains(name) else {
-            errorAlert("An account named '\(name)' already exists.")
-            return
-        }
-        let (ok, output) = AccountStore.snapshot(name)
+        let (ok, output) = AccountStore.snapshotClaude(name)
         if ok {
-            if let email = unknownLoginEmail { defaults.set(email, forKey: "email-\(name)") }
-            unknownLoginEmail = nil
-            AccountStore.notify(title: "Account saved", message: "'\(name)' added and marked active")
+            if let email = unknownClaudeEmail { defaults.set(email, forKey: "email-\(name)") }
+            unknownClaudeEmail = nil
+            if pinnedID == nil { pinnedID = AccountProfile.claude(name).id }
+            refresh()
         } else {
-            errorAlert(output.trimmingCharacters(in: .whitespacesAndNewlines))
+            errorAlert("Claude account wasn’t added", output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        refresh()
+    }
+
+    @objc func addCurrentProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let provider = Provider(rawValue: raw) else { return }
+        let auth = AccountStore.defaultHome(provider).appendingPathComponent("auth.json")
+        guard FileManager.default.fileExists(atPath: auth.path) else {
+            errorAlert("No \(provider.title) login found", "Sign in with the \(provider.title) CLI, then try again.")
+            return
+        }
+        guard let name = askForName(title: "Add current \(provider.title) login",
+                                    detail: "Name this account so you can recognize it in Usage Bar.") else { return }
+        do {
+            let profile = try AccountStore.add(provider: provider, name: name, currentHome: true)
+            if pinnedID == nil { pinnedID = profile.id }
+            refresh()
+        } catch { errorAlert("Account wasn’t added", error.localizedDescription) }
+    }
+
+    @objc func addAnotherProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let provider = Provider(rawValue: raw) else { return }
+        guard let name = askForName(title: "Add another \(provider.title) account",
+                                    detail: "Usage Bar will open an isolated CLI sign-in in Terminal.") else { return }
+        do {
+            let profile = try AccountStore.add(provider: provider, name: name, currentHome: false)
+            launchSignIn(profile)
+            refresh()
+        } catch { errorAlert("Account wasn’t added", error.localizedDescription) }
+    }
+
+    func launchSignIn(_ profile: AccountProfile) {
+        guard let variable = profile.provider.homeVariable, let home = profile.homePath,
+              let executable = AccountStore.executable(profile.provider == .codex ? "codex" : "grok") else {
+            errorAlert("CLI not found", "Install the \(profile.provider.title) CLI, then try again.")
+            return
+        }
+        func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let command: String
+        if profile.provider == .codex {
+            command = "env \(variable)=\(shellQuote(home)) \(shellQuote(executable)) login"
+        } else {
+            command = "env \(variable)=\(shellQuote(home)) \(shellQuote(executable))"
+        }
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        _ = AccountStore.run("/usr/bin/osascript", ["-e",
+            "tell application \"Terminal\" to do script \"\(escaped)\""])
     }
 
     @objc func removeAccount(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
+        guard let id = sender.representedObject as? String,
+              let profile = AccountStore.accounts().first(where: { $0.id == id }) else { return }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Remove '\(name)'?"
-        alert.informativeText = "Deletes the saved credential snapshot on this Mac. The login itself isn't touched."
-        alert.addButton(withTitle: "Remove")
+        alert.messageText = "Remove \(profile.name)?"
+        alert.informativeText = profile.provider == .claude
+            ? "This removes the saved Claude credential snapshot. The login itself stays signed in."
+            : "This removes the account from Usage Bar. Its CLI login files stay on this Mac."
+        alert.addButton(withTitle: "Remove account")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            try AccountStore.remove(name)
-            defaults.removeObject(forKey: "email-\(name)")
-        } catch {
-            errorAlert(error.localizedDescription)
-        }
-        refresh()
+            try AccountStore.remove(profile)
+            defaults.removeObject(forKey: "email-\(profile.name)")
+            if pinnedID == id { pinnedID = nil; chooseDefaultPinIfNeeded() }
+            usage.removeValue(forKey: id)
+            updateStatusButton()
+            rebuildMenu()
+        } catch { errorAlert("Account wasn’t removed", error.localizedDescription) }
     }
 
     @objc func toggleLaunchAtLogin() {
         do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            errorAlert("Launch at Login failed: \(error.localizedDescription)")
-        }
+            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            else { try SMAppService.mainApp.register() }
+        } catch { errorAlert("Launch at login couldn’t be changed", error.localizedDescription) }
         rebuildMenu()
     }
 
-    func errorAlert(_ message: String) {
+    func askForName(title: String, detail: String) -> String? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Account name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Add account")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 40 else {
+            errorAlert("Enter an account name", "Use 1–40 characters.")
+            return nil
+        }
+        return name
+    }
+
+    func errorAlert(_ title: String, _ message: String) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Claude Usage"
+        alert.messageText = title
         alert.informativeText = message
         alert.runModal()
+    }
+
+    // MARK: - Visual proof hook
+
+    func debugShoot() {
+        let demoProfiles = [
+            AccountProfile.claude("Personal"),
+            AccountProfile(id: "demo:codex", provider: .codex, name: "Personal", homePath: nil, usesCurrentHome: true),
+            AccountProfile(id: "demo:grok", provider: .grok, name: "Work", homePath: nil, usesCurrentHome: true),
+        ]
+        let now = Date()
+        let demoUsage: [String: UsageState] = [
+            demoProfiles[0].id: .fresh(ProviderUsage(windows: [
+                UsageWindow(label: "5 hours", shortLabel: "5h", usedPercent: 12, resetsAt: now.addingTimeInterval(8_400), durationMinutes: 300),
+                UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 41, resetsAt: now.addingTimeInterval(345_600), durationMinutes: 10_080),
+            ], fetchedAt: now)),
+            demoProfiles[1].id: .fresh(ProviderUsage(windows: [
+                UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 68, resetsAt: now.addingTimeInterval(259_200), durationMinutes: 10_080),
+            ], fetchedAt: now)),
+            demoProfiles[2].id: .stale(ProviderUsage(windows: [
+                UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 92, resetsAt: now.addingTimeInterval(172_800), durationMinutes: 10_080),
+            ], fetchedAt: now.addingTimeInterval(-900)), "Offline"),
+        ]
+
+        func bitmap(size: NSSize, appearance: NSAppearance.Name, background: NSColor,
+                    draw: @escaping (NSRect) -> Void, path: String) {
+            let scale: CGFloat = 2
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
+                pixelsHigh: Int(size.height * scale), bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                bytesPerRow: 0, bitsPerPixel: 0) else { return }
+            rep.size = size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+                let rect = NSRect(origin: .zero, size: size)
+                background.setFill(); rect.fill(); draw(rect)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+
+        for (suffix, appearance, background) in [
+            ("dark", NSAppearance.Name.darkAqua, NSColor(calibratedWhite: 0.10, alpha: 1)),
+            ("light", NSAppearance.Name.aqua, NSColor(calibratedWhite: 0.94, alpha: 1)),
+        ] {
+            let status = Render.statusText(provider: .claude, usage: demoUsage[demoProfiles[0].id]?.usage, stale: false)
+            bitmap(size: NSSize(width: status.size.width + 16, height: 28), appearance: appearance,
+                   background: background, draw: { rect in
+                status.draw(at: NSPoint(x: 8, y: (rect.height - status.size.height) / 2),
+                            from: .zero, operation: .sourceOver, fraction: 1)
+            }, path: "/tmp/usage-bar-status-\(suffix).png")
+
+            let rows = demoProfiles.map { Render.accountTitle(profile: $0, state: demoUsage[$0.id],
+                activeClaude: "Personal", pinned: $0.provider == .claude) }
+            let sectionFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            let width: CGFloat = 420
+            let heights = rows.map { ceil($0.size().height) + 18 }
+            let totalHeight = heights.reduce(0, +) + 3 * 28 + 72
+            bitmap(size: NSSize(width: width, height: totalHeight), appearance: appearance,
+                   background: background, draw: { rect in
+                var y = rect.height - 26
+                for index in 0..<rows.count {
+                    let heading = NSAttributedString(string: demoProfiles[index].provider.title.uppercased(), attributes: [
+                        .font: sectionFont, .foregroundColor: NSColor.secondaryLabelColor])
+                    heading.draw(at: NSPoint(x: 16, y: y)); y -= 24
+                    rows[index].draw(at: NSPoint(x: 24, y: y - rows[index].size().height + 10))
+                    y -= heights[index]
+                }
+                NSColor.separatorColor.setFill()
+                NSRect(x: 0, y: 57, width: width, height: 1).fill()
+                let footer = NSAttributedString(string: "Add account…     Refresh all     Launch at login ✓",
+                    attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+                footer.draw(at: NSPoint(x: 16, y: 28))
+            }, path: "/tmp/usage-bar-menu-\(suffix).png")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.terminate(nil) }
     }
 }
 
