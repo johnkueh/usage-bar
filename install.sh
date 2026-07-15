@@ -1,6 +1,5 @@
 #!/bin/sh
-# Install claude-usage-bar: the claude-account CLI (if you don't have it)
-# and Claude Usage.app into ~/Applications.
+# Install Usage Bar and the Claude account helper into ~/Applications.
 set -eu
 cd "$(dirname "$0")"
 
@@ -21,7 +20,5 @@ fi
 
 echo
 echo "Done. Next:"
-echo "  1. claude-account snapshot <name>   # while logged into your current account"
-echo "  2. /login as your other account in any Claude Code session"
-echo "  3. claude-account snapshot <other-name>"
-echo "  4. open ~/Applications/'Claude Usage.app'"
+echo "  1. open ~/Applications/'Usage Bar.app'"
+echo "  2. Choose Add account… from the menu"
