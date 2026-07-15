@@ -41,6 +41,8 @@ struct AccountProfile: Codable, Hashable {
         AccountProfile(id: "claude:\(name)", provider: .claude, name: name,
                        homePath: nil, usesCurrentHome: true)
     }
+
+    var supportsSwitching: Bool { provider == .claude }
 }
 
 struct UsageWindow: Codable, Equatable {

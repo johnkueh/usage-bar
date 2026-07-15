@@ -15,7 +15,7 @@ Requires macOS 13+, `jq`, and the Xcode command line tools. Codex and Grok Build
 - **Codex:** every window returned by Codex. It currently returns a weekly window; a 5-hour window will appear automatically if OpenAI restores it.
 - **Grok Build:** its weekly window.
 
-The menu bar shows one pinned account, not every provider at once. Choose *Show in menu bar* from any account’s submenu to change the pin. The tooltip includes the provider and account name.
+The menu bar follows the active Claude Code account, using the original stacked 5-hour and weekly display. Codex and Grok Build stay in the menu as read-only usage rows.
 
 ## Accounts
 
@@ -27,9 +27,9 @@ Open *Add account…* to:
 
 Additional Codex and Grok accounts authenticate directly inside their own `CODEX_HOME` or `GROK_HOME`. Usage Bar stores only account names and home paths in `~/.usage-bar/accounts.json`; provider credentials stay in the provider-managed auth files with their existing permissions. It never copies rotating refresh tokens between accounts.
 
-Claude keeps the existing snapshot model in `~/.claude`. Manual switching remains available from a Claude account’s submenu. Running Claude sessions keep their existing credential; new sessions use the selected account. There is no automatic switching.
+Claude keeps the existing snapshot model in `~/.claude`. Click a Claude account row to switch immediately; the checkmark identifies the active account. Running Claude sessions keep their existing credential, while new sessions use the selected account. Codex and Grok rows never switch credentials and show no checkmark. There is no automatic switching.
 
-Removing a Codex or Grok account detaches it from Usage Bar without deleting its CLI login files. Removing a Claude account deletes that account’s local credential snapshot.
+Remove accounts from *Manage accounts*. Removing a Codex or Grok account detaches it from Usage Bar without deleting its CLI login files. Removing a Claude account deletes that account’s local credential snapshot.
 
 ## Refresh behavior
 

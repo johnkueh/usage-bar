@@ -12,11 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var unknownClaudeEmail: String?
     let defaults = UserDefaults.standard
 
-    var pinnedID: String? {
-        get { defaults.string(forKey: "pinned-account-id") }
-        set { defaults.set(newValue, forKey: "pinned-account-id") }
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         migratePreferences()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -26,7 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.title = "·"
             button.imagePosition = .imageOnly
         }
-        chooseDefaultPinIfNeeded()
         rebuildMenu()
         refresh()
 
@@ -51,18 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func migratePreferences() {
-        ["autopilot", "autopilot-last-switch", "autopilot-last-reason"].forEach {
+        ["autopilot", "autopilot-last-switch", "autopilot-last-reason", "pinned-account-id"].forEach {
             defaults.removeObject(forKey: $0)
-        }
-    }
-
-    func chooseDefaultPinIfNeeded() {
-        let profiles = AccountStore.accounts()
-        if let pinnedID, profiles.contains(where: { $0.id == pinnedID }) { return }
-        if let active = AccountStore.activeClaudeAccount() {
-            pinnedID = AccountProfile.claude(active).id
-        } else {
-            pinnedID = profiles.first?.id
         }
     }
 
@@ -102,7 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.lastRefresh = Date()
                 self.refreshing = false
                 self.reconcileClaudeEmail(liveEmail, active: activeClaude)
-                self.chooseDefaultPinIfNeeded()
                 self.updateStatusButton()
                 self.rebuildMenu()
                 self.heartbeatClaudeIfNeeded(expiredClaude)
@@ -151,23 +134,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        let profiles = AccountStore.accounts()
-        let pinned = profiles.first { $0.id == pinnedID } ?? profiles.first
+        let profiles = AccountStore.accounts().filter { $0.provider == .claude }
+        let active = AccountStore.activeClaudeAccount()
+        let displayed = profiles.first { $0.name == active } ?? profiles.first
         button.title = ""
         button.imagePosition = .imageOnly
-        if let pinned {
-            let state = usage[pinned.id]
+        if let displayed {
+            let state = usage[displayed.id]
             button.image = Render.statusText(usage: state?.usage, stale: state?.isStale ?? false)
             if let snapshot = state?.usage {
                 let values = snapshot.windows.map { String(format: "%@ %.0f%%", $0.label, $0.usedPercent) }
                     .joined(separator: ", ")
-                button.toolTip = "\(pinned.provider.title) — \(pinned.name) — \(values)"
+                button.toolTip = "Claude Code — \(displayed.name) — \(values)"
             } else {
-                button.toolTip = "\(pinned.provider.title) — \(pinned.name) — no usage yet"
+                button.toolTip = "Claude Code — \(displayed.name) — no usage yet"
             }
         } else {
             button.image = Render.statusText(usage: nil, stale: false)
-            button.toolTip = "Usage Bar — add an account"
+            button.toolTip = "Usage Bar — add a Claude Code account"
         }
     }
 
@@ -221,6 +205,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let lastRefresh { refreshItem.toolTip = "Updated \(Render.shortTime(lastRefresh))" }
         menu.addItem(refreshItem)
 
+        let manage = manageAccountsItem(profiles, activeClaude: activeClaude)
+        if !(manage.submenu?.items.isEmpty ?? true) { menu.addItem(manage) }
+
         let launch = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launch.target = self
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -230,39 +217,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func accountItem(_ profile: AccountProfile, activeClaude: String?) -> NSMenuItem {
-        let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
+        let action = profile.supportsSwitching ? #selector(switchClaude(_:)) : #selector(viewUsageOnly(_:))
+        let item = NSMenuItem(title: profile.name, action: action, keyEquivalent: "")
+        item.target = self
         item.representedObject = profile.id
         item.attributedTitle = Render.accountTitle(profile: profile, state: usage[profile.id])
-        item.state = profile.provider == .claude && profile.name == activeClaude ? .on : .off
-        if profile.id == pinnedID { item.toolTip = "Shown in the menu bar" }
+        item.state = profile.supportsSwitching && profile.name == activeClaude ? .on : .off
+        item.toolTip = profile.supportsSwitching
+            ? (profile.name == activeClaude ? "Active Claude Code account" : "Switch to \(profile.name)")
+            : "Usage only"
+        return item
+    }
+
+    func manageAccountsItem(_ profiles: [AccountProfile], activeClaude: String?) -> NSMenuItem {
+        let root = NSMenuItem(title: "Manage accounts", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
-
-        let pin = NSMenuItem(title: "Show in menu bar", action: #selector(pinAccount(_:)), keyEquivalent: "")
-        pin.target = self
-        pin.representedObject = profile.id
-        pin.state = profile.id == pinnedID ? .on : .off
-        submenu.addItem(pin)
-
-        if profile.provider == .claude, profile.name != activeClaude {
-            let switchItem = NSMenuItem(title: "Switch to this account", action: #selector(switchClaude(_:)), keyEquivalent: "")
-            switchItem.target = self
-            switchItem.representedObject = profile.name
-            submenu.addItem(switchItem)
-        }
-
-        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "")
-        refreshItem.target = self
-        submenu.addItem(refreshItem)
-
-        if !(profile.provider == .claude && profile.name == activeClaude) {
-            submenu.addItem(.separator())
-            let remove = NSMenuItem(title: "Remove account…", action: #selector(removeAccount(_:)), keyEquivalent: "")
+        for profile in profiles where !(profile.provider == .claude && profile.name == activeClaude) {
+            let remove = NSMenuItem(title: "Remove \(profile.provider.title) — \(profile.name)…",
+                                    action: #selector(removeAccount(_:)), keyEquivalent: "")
             remove.target = self
             remove.representedObject = profile.id
             submenu.addItem(remove)
         }
-        item.submenu = submenu
-        return item
+        root.submenu = submenu
+        return root
     }
 
     func addAccountItem() -> NSMenuItem {
@@ -298,7 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for item in menu.items {
             guard let id = item.representedObject as? String, let profile = profiles[id] else { continue }
             item.attributedTitle = Render.accountTitle(profile: profile, state: usage[id])
-            item.state = profile.provider == .claude && profile.name == activeClaude ? .on : .off
+            item.state = profile.supportsSwitching && profile.name == activeClaude ? .on : .off
         }
     }
 
@@ -306,17 +284,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func refreshNow() { refresh() }
 
-    @objc func pinAccount(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        pinnedID = id
-        updateStatusButton()
-        rebuildMenu()
+    @objc func switchClaude(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let profile = AccountStore.accounts().first(where: { $0.id == id && $0.provider == .claude }),
+              profile.name != AccountStore.activeClaudeAccount() else { return }
+        performClaudeSwitch(to: profile.name)
     }
 
-    @objc func switchClaude(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        performClaudeSwitch(to: name)
-    }
+    @objc func viewUsageOnly(_ sender: NSMenuItem) {}
 
     func performClaudeSwitch(to name: String) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -345,7 +320,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ok {
             if let email = unknownClaudeEmail { defaults.set(email, forKey: "email-\(name)") }
             unknownClaudeEmail = nil
-            if pinnedID == nil { pinnedID = AccountProfile.claude(name).id }
             refresh()
         } else {
             errorAlert("Claude account wasn’t added", output.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -362,8 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let name = askForName(title: "Add current \(provider.title) login",
                                     detail: "Name this account so you can recognize it in Usage Bar.") else { return }
         do {
-            let profile = try AccountStore.add(provider: provider, name: name, currentHome: true)
-            if pinnedID == nil { pinnedID = profile.id }
+            _ = try AccountStore.add(provider: provider, name: name, currentHome: true)
             refresh()
         } catch { errorAlert("Account wasn’t added", error.localizedDescription) }
     }
@@ -414,7 +387,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             try AccountStore.remove(profile)
             defaults.removeObject(forKey: "email-\(profile.name)")
-            if pinnedID == id { pinnedID = nil; chooseDefaultPinIfNeeded() }
             usage.removeValue(forKey: id)
             updateStatusButton()
             rebuildMenu()
@@ -463,8 +435,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func debugShoot() {
         let demoProfiles = [
             AccountProfile.claude("Personal"),
+            AccountProfile.claude("Work"),
             AccountProfile(id: "demo:codex", provider: .codex, name: "Personal", homePath: nil, usesCurrentHome: true),
-            AccountProfile(id: "demo:grok", provider: .grok, name: "Work", homePath: nil, usesCurrentHome: true),
+            AccountProfile(id: "demo:grok", provider: .grok, name: "Personal", homePath: nil, usesCurrentHome: true),
         ]
         let now = Date()
         let demoUsage: [String: UsageState] = [
@@ -473,9 +446,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 41, resetsAt: now.addingTimeInterval(345_600), durationMinutes: 10_080),
             ], fetchedAt: now)),
             demoProfiles[1].id: .fresh(ProviderUsage(windows: [
+                UsageWindow(label: "5 hours", shortLabel: "5h", usedPercent: 33, resetsAt: now.addingTimeInterval(12_600), durationMinutes: 300),
+                UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 55, resetsAt: now.addingTimeInterval(432_000), durationMinutes: 10_080),
+            ], fetchedAt: now)),
+            demoProfiles[2].id: .fresh(ProviderUsage(windows: [
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 68, resetsAt: now.addingTimeInterval(259_200), durationMinutes: 10_080),
             ], fetchedAt: now)),
-            demoProfiles[2].id: .stale(ProviderUsage(windows: [
+            demoProfiles[3].id: .stale(ProviderUsage(windows: [
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 92, resetsAt: now.addingTimeInterval(172_800), durationMinutes: 10_080),
             ], fetchedAt: now.addingTimeInterval(-900)), "Offline"),
         ]
@@ -509,34 +486,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             from: .zero, operation: .sourceOver, fraction: 1)
             }, path: "/tmp/usage-bar-status-\(suffix).png")
 
-            let rows = demoProfiles.map { Render.accountTitle(profile: $0, state: demoUsage[$0.id]) }
             let sectionFont = NSFont.systemFont(ofSize: 13, weight: .regular)
             let width: CGFloat = 360
-            let heights = rows.map { ceil($0.size().height) + 18 }
-            let totalHeight = heights.reduce(0, +) + 3 * 28 + 116
+            let rows = Dictionary(uniqueKeysWithValues: demoProfiles.map {
+                ($0.id, Render.accountTitle(profile: $0, state: demoUsage[$0.id]))
+            })
+            let rowHeight = rows.values.reduce(CGFloat(0)) { $0 + ceil($1.size().height) + 18 }
+            let totalHeight = rowHeight + 3 * 28 + 142
             bitmap(size: NSSize(width: width, height: totalHeight), appearance: appearance,
                    background: background, draw: { rect in
                 var y = rect.height - 26
-                for index in 0..<rows.count {
-                    let heading = NSAttributedString(string: demoProfiles[index].provider.title, attributes: [
+                for provider in Provider.allCases {
+                    let heading = NSAttributedString(string: provider.title, attributes: [
                         .font: sectionFont, .foregroundColor: NSColor.secondaryLabelColor])
                     heading.draw(at: NSPoint(x: 16, y: y)); y -= 24
-                    if index == 0 {
-                        NSAttributedString(string: "✓", attributes: [
-                            .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
-                        ]).draw(at: NSPoint(x: 10, y: y - 12))
+                    for profile in demoProfiles where profile.provider == provider {
+                        guard let row = rows[profile.id] else { continue }
+                        if profile.id == demoProfiles[0].id {
+                            NSAttributedString(string: "✓", attributes: [
+                                .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+                            ]).draw(at: NSPoint(x: 10, y: y - 12))
+                        }
+                        row.draw(at: NSPoint(x: 28, y: y - row.size().height + 10))
+                        y -= ceil(row.size().height) + 18
                     }
-                    rows[index].draw(at: NSPoint(x: 28, y: y - rows[index].size().height + 10))
-                    y -= heights[index]
                 }
                 NSColor.separatorColor.setFill()
-                NSRect(x: 0, y: 96, width: width, height: 1).fill()
+                NSRect(x: 0, y: 122, width: width, height: 1).fill()
                 let footerAttributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
                 ]
                 NSAttributedString(string: "Add account…", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 68))
+                    .draw(at: NSPoint(x: 16, y: 94))
                 NSAttributedString(string: "Refresh all", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 68))
+                NSAttributedString(string: "Manage accounts", attributes: footerAttributes)
                     .draw(at: NSPoint(x: 16, y: 42))
                 NSAttributedString(string: "✓   Launch at login", attributes: footerAttributes)
                     .draw(at: NSPoint(x: 16, y: 16))

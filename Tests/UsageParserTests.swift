@@ -31,6 +31,15 @@ enum UsageParserTests {
         require(parsedGrok?.windows.first?.usedPercent == 25, "Grok weekly percentage")
         require(parsedGrok?.windows.first?.shortLabel == "W", "Grok weekly label")
 
+        let claude = AccountProfile.claude("personal")
+        let codex = AccountProfile(id: "codex:test", provider: .codex, name: "personal",
+                                   homePath: nil, usesCurrentHome: true)
+        let grokProfile = AccountProfile(id: "grok:test", provider: .grok, name: "personal",
+                                         homePath: nil, usesCurrentHome: true)
+        require(claude.supportsSwitching, "Claude accounts should remain switchable")
+        require(!codex.supportsSwitching && !grokProfile.supportsSwitching,
+                "Codex and Grok accounts should remain usage-only")
+
         print("Usage parser tests passed")
     }
 }
