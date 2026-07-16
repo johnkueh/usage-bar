@@ -3,8 +3,14 @@ import Darwin
 
 enum AccountStore {
     static let claudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
-    static let claudeCLI = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/bin/claude-account").path
+    static var claudeCLI: String {
+        if let bundled = Bundle.main.path(forResource: "claude-account", ofType: nil),
+           FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/claude-account").path
+    }
     static let appDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".usage-bar")
     static let registryURL = appDir.appendingPathComponent("accounts.json")
 
