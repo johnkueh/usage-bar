@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#343439"/>
+      <stop offset="1" stop-color="#18181b"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="32" stdDeviation="28" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <rect x="96" y="82" width="832" height="832" rx="190" fill="url(#surface)" filter="url(#shadow)"/>
+  <rect x="96.5" y="82.5" width="831" height="831" rx="189.5" fill="none" stroke="#fff" stroke-opacity=".13"/>
+  <g transform="translate(218 0)">
+    <rect x="0" y="337" width="588" height="86" rx="43" fill="#65656b"/>
+    <rect x="0" y="337" width="211" height="86" rx="43" fill="#37d66b"/>
+    <circle cx="211" cy="380" r="24" fill="#f0fff4" fill-opacity=".92"/>
+    <rect x="0" y="557" width="588" height="86" rx="43" fill="#65656b"/>
+    <rect x="0" y="557" width="405" height="86" rx="43" fill="#37d66b"/>
+    <circle cx="405" cy="600" r="24" fill="#f0fff4" fill-opacity=".92"/>
+  </g>
+</svg>
