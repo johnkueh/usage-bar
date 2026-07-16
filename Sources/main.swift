@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var usage: [String: UsageState] = [:]
     var lastRefresh: Date?
     var refreshing = false
+    var refreshPending = false
     var heartbeating = false
     var menuOpen = false
+    var menuNeedsRebuild = false
     var unknownClaudeEmail: String?
     let defaults = UserDefaults.standard
 
@@ -21,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.title = "·"
             button.imagePosition = .imageOnly
         }
+        usage = UsageCache.initialStates(AccountStore.accounts())
+        updateStatusButton()
         rebuildMenu()
         refresh()
 
@@ -53,7 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Refresh
 
     func refresh() {
-        guard !refreshing else { return }
+        guard !refreshing else {
+            refreshPending = true
+            return
+        }
         refreshing = true
         let profiles = AccountStore.accounts()
         let activeClaude = AccountStore.activeClaudeAccount()
@@ -89,6 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.updateStatusButton()
                 self.rebuildMenu()
                 self.heartbeatClaudeIfNeeded(expiredClaude)
+                if self.refreshPending {
+                    self.refreshPending = false
+                    self.refresh()
+                }
             }
         }
     }
@@ -163,10 +174,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
-    func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+    func menuDidClose(_ menu: NSMenu) {
+        menuOpen = false
+        if menuNeedsRebuild {
+            menuNeedsRebuild = false
+            rebuildMenu()
+        }
+    }
 
     func rebuildMenu() {
-        if menuOpen { updateOpenMenu(); return }
+        if menuOpen {
+            menuNeedsRebuild = true
+            updateOpenMenu()
+            return
+        }
         menu.removeAllItems()
         let profiles = AccountStore.accounts()
         let activeClaude = AccountStore.activeClaudeAccount()
@@ -456,6 +477,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 92, resetsAt: now.addingTimeInterval(172_800), durationMinutes: 10_080),
             ], fetchedAt: now.addingTimeInterval(-900)), "Offline"),
         ]
+        let liveProof = ProcessInfo.processInfo.environment["DEBUG_LIVE_SHOOT"] == "1"
+        let proofProfiles = liveProof ? AccountStore.accounts() : demoProfiles
+        let proofUsage = liveProof ? UsageCache.initialStates(proofProfiles) : demoUsage
+        let proofActiveClaude = liveProof ? AccountStore.activeClaudeAccount() : demoProfiles.first?.name
 
         func bitmap(size: NSSize, appearance: NSAppearance.Name, background: NSColor,
                     draw: @escaping (NSRect) -> Void, path: String) {
@@ -479,7 +504,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ("dark", NSAppearance.Name.darkAqua, NSColor(calibratedWhite: 0.10, alpha: 1)),
             ("light", NSAppearance.Name.aqua, NSColor(calibratedWhite: 0.94, alpha: 1)),
         ] {
-            let status = Render.statusText(usage: demoUsage[demoProfiles[0].id]?.usage, stale: false)
+            let statusProfile = proofProfiles.first { $0.provider == .claude }
+            let status = Render.statusText(usage: statusProfile.flatMap { proofUsage[$0.id]?.usage }, stale: false)
             bitmap(size: NSSize(width: status.size.width + 16, height: 28), appearance: appearance,
                    background: background, draw: { rect in
                 status.draw(at: NSPoint(x: 8, y: (rect.height - status.size.height) / 2),
@@ -488,8 +514,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             let sectionFont = NSFont.systemFont(ofSize: 13, weight: .regular)
             let width: CGFloat = 360
-            let rows = Dictionary(uniqueKeysWithValues: demoProfiles.map {
-                ($0.id, Render.accountTitle(profile: $0, state: demoUsage[$0.id]))
+            let rows = Dictionary(uniqueKeysWithValues: proofProfiles.map {
+                ($0.id, Render.accountTitle(profile: $0, state: proofUsage[$0.id]))
             })
             let rowHeight = rows.values.reduce(CGFloat(0)) { $0 + ceil($1.size().height) + 18 }
             let totalHeight = rowHeight + 3 * 28 + 142
@@ -500,9 +526,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let heading = NSAttributedString(string: provider.title, attributes: [
                         .font: sectionFont, .foregroundColor: NSColor.secondaryLabelColor])
                     heading.draw(at: NSPoint(x: 16, y: y)); y -= 24
-                    for profile in demoProfiles where profile.provider == provider {
+                    for profile in proofProfiles where profile.provider == provider {
                         guard let row = rows[profile.id] else { continue }
-                        if profile.id == demoProfiles[0].id {
+                        if profile.provider == .claude && profile.name == proofActiveClaude {
                             NSAttributedString(string: "✓", attributes: [
                                 .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
                             ]).draw(at: NSPoint(x: 10, y: y - 12))

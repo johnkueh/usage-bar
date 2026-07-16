@@ -146,4 +146,17 @@ enum UsageCache {
         guard let data = UserDefaults.standard.data(forKey: key(id)) else { return nil }
         return try? JSONDecoder().decode(ProviderUsage.self, from: data)
     }
+
+    static func initialStates(
+        _ profiles: [AccountProfile],
+        loader: (String) -> ProviderUsage? = { UsageCache.load($0) }
+    ) -> [String: UsageState] {
+        var states: [String: UsageState] = [:]
+        for profile in profiles {
+            if let cached = loader(profile.id) {
+                states[profile.id] = .fresh(cached)
+            }
+        }
+        return states
+    }
 }
