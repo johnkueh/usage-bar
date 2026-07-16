@@ -40,6 +40,18 @@ enum UsageParserTests {
         require(!codex.supportsSwitching && !grokProfile.supportsSwitching,
                 "Codex and Grok accounts should remain usage-only")
 
+        let cachedUsage = ProviderUsage(windows: [UsageWindow(
+            label: "Weekly", shortLabel: "W", usedPercent: 18,
+            resetsAt: nil, durationMinutes: 10_080
+        )], fetchedAt: Date())
+        let initialStates = UsageCache.initialStates([codex, grokProfile]) { id in
+            id == codex.id ? cachedUsage : nil
+        }
+        require(initialStates[codex.id]?.usage == cachedUsage,
+                "Cached provider usage should be visible as soon as the app launches")
+        require(initialStates[grokProfile.id] == nil,
+                "Accounts without cached usage should continue to show a loading state")
+
         print("Usage parser tests passed")
     }
 }
