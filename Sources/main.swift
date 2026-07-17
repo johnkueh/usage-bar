@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         usage = UsageCache.initialStates(AccountStore.accounts())
         updateStatusButton()
         rebuildMenu()
+        Updater.shared.start()
         refresh()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             self?.showFirstRunWelcomeIfNeeded()
@@ -265,6 +266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launch.target = self
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launch)
+        let updates = NSMenuItem(title: "Check for Updates…",
+                                 action: #selector(checkForUpdates), keyEquivalent: "")
+        updates.target = self
+        menu.addItem(updates)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Usage Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -338,6 +343,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
 
     @objc func refreshNow() { refresh() }
+
+    @objc func checkForUpdates() { Updater.shared.checkForUpdates() }
 
     @objc func switchClaude(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
@@ -564,7 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ($0.id, Render.accountTitle(profile: $0, state: proofUsage[$0.id]))
             })
             let rowHeight = rows.values.reduce(CGFloat(0)) { $0 + ceil($1.size().height) + 18 }
-            let totalHeight = rowHeight + 3 * 28 + 142
+            let totalHeight = rowHeight + 3 * 28 + 168
             bitmap(size: NSSize(width: width, height: totalHeight), appearance: appearance,
                    background: background, draw: { rect in
                 var y = rect.height - 26
@@ -584,17 +591,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }
                 NSColor.separatorColor.setFill()
-                NSRect(x: 0, y: 122, width: width, height: 1).fill()
+                NSRect(x: 0, y: 148, width: width, height: 1).fill()
                 let footerAttributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
                 ]
                 NSAttributedString(string: "Add account…", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 94))
+                    .draw(at: NSPoint(x: 16, y: 120))
                 NSAttributedString(string: "Refresh all", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 68))
+                    .draw(at: NSPoint(x: 16, y: 94))
                 NSAttributedString(string: "Manage accounts", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 42))
+                    .draw(at: NSPoint(x: 16, y: 68))
                 NSAttributedString(string: "✓   Launch at login", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 42))
+                NSAttributedString(string: "Check for Updates…", attributes: footerAttributes)
                     .draw(at: NSPoint(x: 16, y: 16))
             }, path: "/tmp/usage-bar-menu-\(suffix).png")
         }
