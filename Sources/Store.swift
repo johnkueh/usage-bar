@@ -78,11 +78,20 @@ enum AccountStore {
         case .claude: return home.appendingPathComponent(".claude")
         case .codex: return home.appendingPathComponent(".codex")
         case .grok: return home.appendingPathComponent(".grok")
+        case .kimi: return home.appendingPathComponent(".kimi-code")
         }
     }
 
     static func isSignedIn(_ profile: AccountProfile) -> Bool {
         guard let homePath = profile.homePath else { return false }
+        if profile.provider == .kimi {
+            let home = URL(fileURLWithPath: homePath)
+            let oauth = home.appendingPathComponent("credentials/kimi-code.json")
+            let config = home.appendingPathComponent("config.toml")
+            if FileManager.default.fileExists(atPath: oauth.path) { return true }
+            guard let text = try? String(contentsOf: config, encoding: .utf8) else { return false }
+            return kimiAPIKey(in: text) != nil
+        }
         let auth = URL(fileURLWithPath: homePath).appendingPathComponent("auth.json")
         return FileManager.default.fileExists(atPath: auth.path)
     }
@@ -120,6 +129,7 @@ enum AccountStore {
         switch name {
         case "codex": candidates = ["\(home)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
         case "grok": candidates = ["\(home)/.grok/bin/grok", "\(home)/.local/bin/grok", "/opt/homebrew/bin/grok"]
+        case "kimi": candidates = ["\(home)/.kimi-code/bin/kimi", "\(home)/.local/bin/kimi", "/opt/homebrew/bin/kimi", "/usr/local/bin/kimi"]
         default: candidates = []
         }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -144,6 +154,50 @@ enum AccountStore {
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty else { return nil }
         return token
+    }
+
+    static func kimiAPIKey(in config: String) -> String? {
+        let lines = config.components(separatedBy: .newlines)
+        var inKimiSection = false
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "[providers.kimi]" {
+                inKimiSection = true
+            } else if trimmed.hasPrefix("[") {
+                inKimiSection = false
+            } else if inKimiSection, trimmed.hasPrefix("api_key") {
+                let parts = trimmed.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                return parts[1].trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            }
+        }
+        return nil
+    }
+
+    static func kimiToken(for profile: AccountProfile) -> String? {
+        guard let homePath = profile.homePath else { return nil }
+        let home = URL(fileURLWithPath: homePath)
+
+        // Prefer OAuth access token when available and not expired.
+        let oauthFile = home.appendingPathComponent("credentials/kimi-code.json")
+        if let data = try? Data(contentsOf: oauthFile),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let accessToken = json["access_token"] as? String,
+           let expiresAt = json["expires_at"] as? NSNumber,
+           expiresAt.doubleValue > Date().timeIntervalSince1970 + 60 {
+            return accessToken
+        }
+
+        // Fall back to the API key configured for the kimi provider.
+        let configFile = home.appendingPathComponent("config.toml")
+        if let config = try? String(contentsOf: configFile, encoding: .utf8) {
+            if let key = kimiAPIKey(in: config), !key.isEmpty {
+                return key
+            }
+        }
+
+        return nil
     }
 
     static func switchClaude(to name: String) -> (Bool, String) {
@@ -176,6 +230,8 @@ enum ProviderClient {
             return fetchCodex(profile)
         case .grok:
             return fetchGrok(profile)
+        case .kimi:
+            return fetchKimi(profile)
         }
     }
 
@@ -295,5 +351,13 @@ enum ProviderClient {
         master.readabilityHandler = nil
         if process.isRunning { process.interrupt() }
         return result == .success && parsed != nil ? (parsed, "") : (nil, "Grok usage is unavailable")
+    }
+
+    private static func fetchKimi(_ profile: AccountProfile) -> (ProviderUsage?, String) {
+        guard AccountStore.isSignedIn(profile) else { return (nil, "Sign in to refresh") }
+        guard let token = AccountStore.kimiToken(for: profile) else {
+            return (nil, "No Kimi token found")
+        }
+        return UsageAPI.fetchKimi(token: token)
     }
 }

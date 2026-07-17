@@ -12,11 +12,11 @@ enum UsageAPI {
         return fractional.date(from: string) ?? ISO8601DateFormatter().date(from: string)
     }
 
-    private static func get(_ urlString: String, token: String) -> (Data?, Int, String?) {
+    private static func get(_ urlString: String, token: String, headers: [String: String] = [:]) -> (Data?, Int, String?) {
         guard let url = URL(string: urlString) else { return (nil, 0, "bad URL") }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
         request.timeoutInterval = 10
         var result: (Data?, Int, String?) = (nil, 0, "timed out")
         let semaphore = DispatchSemaphore(value: 0)
@@ -30,7 +30,8 @@ enum UsageAPI {
     }
 
     static func fetchClaude(token: String) -> (ProviderUsage?, String) {
-        let (data, status, error) = get("https://api.anthropic.com/api/oauth/usage", token: token)
+        let headers = ["anthropic-beta": "oauth-2025-04-20"]
+        let (data, status, error) = get("https://api.anthropic.com/api/oauth/usage", token: token, headers: headers)
         if status == 401 { return (nil, "Token expired") }
         if let error, data == nil { return (nil, error) }
         guard status == 200, let data,
@@ -53,7 +54,8 @@ enum UsageAPI {
     }
 
     static func fetchClaudeEmail(token: String) -> String? {
-        let (data, status, _) = get("https://api.anthropic.com/api/oauth/profile", token: token)
+        let headers = ["anthropic-beta": "oauth-2025-04-20"]
+        let (data, status, _) = get("https://api.anthropic.com/api/oauth/profile", token: token, headers: headers)
         guard status == 200, let data,
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
@@ -61,6 +63,57 @@ enum UsageAPI {
             return email
         }
         return json["email"] as? String
+    }
+
+    static func fetchKimi(token: String) -> (ProviderUsage?, String) {
+        let (data, status, error) = get("https://api.kimi.com/coding/v1/usages", token: token)
+        if status == 401 { return (nil, "Token expired") }
+        if let error, data == nil { return (nil, error) }
+        guard status == 200, let data,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              json["usage"] as? [String: Any] != nil else {
+            return (nil, status == 0 ? "Offline" : "HTTP \(status)")
+        }
+        guard let usage = parseKimiAPI(json) else {
+            return (nil, "Couldn’t parse Kimi usage")
+        }
+        return (usage, "")
+    }
+
+    static func parseKimiAPI(_ json: [String: Any]) -> ProviderUsage? {
+        guard let usage = json["usage"] as? [String: Any],
+              let limitString = usage["limit"] as? String,
+              let usedString = usage["used"] as? String,
+              let limit = Double(limitString),
+              let used = Double(usedString) else { return nil }
+
+        var windows: [UsageWindow] = []
+        let weeklyPercent = limit > 0 ? (used / limit) * 100 : 0
+        windows.append(UsageWindow(label: "Weekly", shortLabel: "W",
+                                   usedPercent: weeklyPercent,
+                                   resetsAt: parseDate(usage["resetTime"]),
+                                   durationMinutes: 10_080))
+
+        if let limits = json["limits"] as? [[String: Any]] {
+            for limitObj in limits {
+                guard let window = limitObj["window"] as? [String: Any],
+                      let duration = (window["duration"] as? NSNumber)?.doubleValue,
+                      duration == 300,
+                      (window["timeUnit"] as? String) == "TIME_UNIT_MINUTE",
+                      let detail = limitObj["detail"] as? [String: Any],
+                      let detailLimitString = detail["limit"] as? String,
+                      let detailUsedString = detail["used"] as? String,
+                      let detailLimit = Double(detailLimitString),
+                      let detailUsed = Double(detailUsedString) else { continue }
+                let percent = detailLimit > 0 ? (detailUsed / detailLimit) * 100 : 0
+                windows.append(UsageWindow(label: "5 hours", shortLabel: "5h",
+                                           usedPercent: percent,
+                                           resetsAt: parseDate(detail["resetTime"]),
+                                           durationMinutes: 300))
+            }
+        }
+
+        return windows.isEmpty ? nil : ProviderUsage(windows: windows, fetchedAt: Date())
     }
 
     static func windowLabel(minutes: Int) -> (String, String) {

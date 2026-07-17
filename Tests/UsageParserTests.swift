@@ -31,6 +31,25 @@ enum UsageParserTests {
         require(parsedGrok?.windows.first?.usedPercent == 25, "Grok weekly percentage")
         require(parsedGrok?.windows.first?.shortLabel == "W", "Grok weekly label")
 
+        let kimAPI: [String: Any] = [
+            "user": ["userId": "user-123", "region": "REGION_OVERSEA"],
+            "usage": ["limit": "100", "used": "20", "remaining": "80", "resetTime": "2026-07-24T03:29:02.978114Z"],
+            "limits": [[
+                "window": ["duration": 300, "timeUnit": "TIME_UNIT_MINUTE"],
+                "detail": ["limit": "100", "used": "100", "resetTime": "2026-07-17T08:29:02.978114Z"]
+            ]],
+            "parallel": ["limit": "10"],
+            "totalQuota": ["limit": "100", "remaining": "99"]
+        ]
+        let parsedKimiAPI = UsageAPI.parseKimiAPI(kimAPI)
+        require(parsedKimiAPI?.windows.count == 2, "Kimi API should expose weekly and 5h windows")
+        require(parsedKimiAPI?.windows[0].label == "Weekly", "Kimi API weekly label")
+        require(parsedKimiAPI?.windows[0].usedPercent == 20, "Kimi API weekly used percent")
+        require(parsedKimiAPI?.windows[0].shortLabel == "W", "Kimi API weekly short label")
+        require(parsedKimiAPI?.windows[1].label == "5 hours", "Kimi API 5h label")
+        require(parsedKimiAPI?.windows[1].usedPercent == 100, "Kimi API 5h used percent")
+        require(parsedKimiAPI?.windows[1].shortLabel == "5h", "Kimi API 5h short label")
+
         let claude = AccountProfile.claude("personal")
         let codex = AccountProfile(id: "codex:test", provider: .codex, name: "personal",
                                    homePath: nil, usesCurrentHome: true)

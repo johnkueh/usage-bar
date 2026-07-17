@@ -28,30 +28,46 @@ enum Render {
         return "\(max(1, difference / 60))m"
     }
 
+    /// Visible empty-state glyph for first run / no accounts — template so it follows menu-bar tint.
+    static func emptyStatusIcon() -> NSImage {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let text = NSAttributedString(string: "Usage", attributes: [
+            .font: font,
+            .foregroundColor: NSColor.black,
+        ])
+        let size = text.size()
+        let image = NSImage(size: NSSize(width: ceil(size.width) + 2, height: 18), flipped: false) { rect in
+            text.draw(at: NSPoint(x: 1, y: (rect.height - size.height) / 2))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     static func statusText(usage: ProviderUsage?, stale: Bool) -> NSImage {
+        let windows = usage?.windows.prefix(2).map { $0 } ?? []
+        if windows.isEmpty {
+            return emptyStatusIcon()
+        }
+
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
         let dim: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
 
-        func line(_ window: UsageWindow?) -> NSAttributedString {
+        func line(_ window: UsageWindow) -> NSAttributedString {
             let result = NSMutableAttributedString()
-            if let window {
-                let label = window.durationMinutes == 300 ? "S" : window.shortLabel
-                result.append(NSAttributedString(string: "\(label):", attributes: dim))
-                let valueColor: NSColor = window.usedPercent >= 90 ? .systemRed
-                    : window.usedPercent >= 70 ? .systemOrange : .labelColor
-                result.append(NSAttributedString(string: String(format: "%.0f%%", window.usedPercent),
-                    attributes: [.font: font, .foregroundColor: valueColor]))
-                let reset = countdown(window.resetsAt)
-                if !reset.isEmpty { result.append(NSAttributedString(string: "/\(reset)", attributes: dim)) }
-            } else {
-                result.append(NSAttributedString(string: "–", attributes: dim))
-            }
+            let label = window.durationMinutes == 300 ? "S" : window.shortLabel
+            result.append(NSAttributedString(string: "\(label):", attributes: dim))
+            let valueColor: NSColor = window.usedPercent >= 90 ? .systemRed
+                : window.usedPercent >= 70 ? .systemOrange : .labelColor
+            result.append(NSAttributedString(string: String(format: "%.0f%%", window.usedPercent),
+                attributes: [.font: font, .foregroundColor: valueColor]))
+            let reset = countdown(window.resetsAt)
+            if !reset.isEmpty { result.append(NSAttributedString(string: "/\(reset)", attributes: dim)) }
             if stale { result.append(NSAttributedString(string: "~", attributes: dim)) }
             return result
         }
 
-        let windows = usage?.windows.prefix(2).map { $0 } ?? []
-        let lines = windows.isEmpty ? [line(nil)] : windows.map(line)
+        let lines = windows.map(line)
         let textWidth = ceil(lines.map { $0.size().width }.max() ?? 8) + 1
         let image = NSImage(size: NSSize(width: textWidth, height: 21), flipped: false) { _ in
             if lines.count == 1 {

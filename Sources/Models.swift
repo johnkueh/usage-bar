@@ -4,12 +4,14 @@ enum Provider: String, Codable, CaseIterable {
     case claude
     case codex
     case grok
+    case kimi
 
     var title: String {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
         case .grok: return "Grok Build"
+        case .kimi: return "Kimi Code"
         }
     }
 
@@ -18,6 +20,7 @@ enum Provider: String, Codable, CaseIterable {
         case .claude: return "C"
         case .codex: return "O"
         case .grok: return "X"
+        case .kimi: return "K"
         }
     }
 
@@ -26,6 +29,7 @@ enum Provider: String, Codable, CaseIterable {
         case .claude: return nil
         case .codex: return "CODEX_HOME"
         case .grok: return "GROK_HOME"
+        case .kimi: return "KIMI_HOME"
         }
     }
 }

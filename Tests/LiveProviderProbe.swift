@@ -5,7 +5,7 @@ enum LiveProviderProbe {
     static func main() {
         let providerName = CommandLine.arguments.dropFirst().first ?? ""
         guard let provider = Provider(rawValue: providerName), provider != .claude else {
-            FileHandle.standardError.write(Data("usage: LiveProviderProbe codex|grok\n".utf8))
+            FileHandle.standardError.write(Data("usage: LiveProviderProbe codex|grok|kimi\n".utf8))
             exit(2)
         }
         let profile = AccountProfile(id: "probe:\(provider.rawValue)", provider: provider,

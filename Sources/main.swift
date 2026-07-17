@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusButton()
         rebuildMenu()
         refresh()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.showFirstRunWelcomeIfNeeded()
+        }
 
         let timer = Timer(timeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
         timer.tolerance = 30
@@ -38,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if ProcessInfo.processInfo.environment["DEBUG_SHOOT"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.debugShoot() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.debugShoot() }
         }
         if let target = ProcessInfo.processInfo.environment["DEBUG_SWITCH"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -161,8 +164,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 button.toolTip = "Claude Code — \(displayed.name) — no usage yet"
             }
         } else {
-            button.image = Render.statusText(usage: nil, stale: false)
-            button.toolTip = "Usage Bar — add a Claude Code account"
+            button.image = Render.emptyStatusIcon()
+            button.toolTip = "Usage Bar — click here, then Add account…"
+        }
+    }
+
+    // MARK: - First run
+
+    private static let firstRunKey = "did-show-first-run-welcome"
+
+    func showFirstRunWelcomeIfNeeded() {
+        guard ProcessInfo.processInfo.environment["DEBUG_SHOOT"] != "1",
+              ProcessInfo.processInfo.environment["DEBUG_SWITCH"] == nil,
+              !defaults.bool(forKey: Self.firstRunKey) else { return }
+        defaults.set(true, forKey: Self.firstRunKey)
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Usage Bar is in the menu bar"
+        alert.informativeText = """
+        There is no Dock icon. Look for “Usage” in the top-right of your screen (near the clock / Control Center).
+
+        Click it, then choose Add account… to connect Claude Code, Codex, Grok, or Kimi.
+
+        Tip: drag the app into Applications before opening it, so it stays after you eject the installer.
+        """
+        alert.addButton(withTitle: "Show me")
+        alert.addButton(withTitle: "Got it")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Pop the status-item menu so the user can see where the app lives.
+            statusItem.button?.performClick(nil)
         }
     }
 
@@ -274,6 +306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addProviderActions(.codex, to: submenu)
         submenu.addItem(.separator())
         addProviderActions(.grok, to: submenu)
+        submenu.addItem(.separator())
+        addProviderActions(.kimi, to: submenu)
         root.submenu = submenu
         return root
     }
@@ -349,8 +383,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func addCurrentProvider(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let provider = Provider(rawValue: raw) else { return }
-        let auth = AccountStore.defaultHome(provider).appendingPathComponent("auth.json")
-        guard FileManager.default.fileExists(atPath: auth.path) else {
+        let isAuthenticated: Bool
+        if provider == .kimi {
+            let home = AccountStore.defaultHome(provider)
+            isAuthenticated = FileManager.default.fileExists(atPath: home.path) && AccountStore.executable("kimi") != nil
+        } else {
+            let auth = AccountStore.defaultHome(provider).appendingPathComponent("auth.json")
+            isAuthenticated = FileManager.default.fileExists(atPath: auth.path)
+        }
+        guard isAuthenticated else {
             errorAlert("No \(provider.title) login found", "Sign in with the \(provider.title) CLI, then try again.")
             return
         }
@@ -375,7 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func launchSignIn(_ profile: AccountProfile) {
         guard let variable = profile.provider.homeVariable, let home = profile.homePath,
-              let executable = AccountStore.executable(profile.provider == .codex ? "codex" : "grok") else {
+              let executable = AccountStore.executable(profile.provider == .codex ? "codex" : profile.provider == .grok ? "grok" : "kimi") else {
             errorAlert("CLI not found", "Install the \(profile.provider.title) CLI, then try again.")
             return
         }
@@ -459,6 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             AccountProfile.claude("Work"),
             AccountProfile(id: "demo:codex", provider: .codex, name: "Personal", homePath: nil, usesCurrentHome: true),
             AccountProfile(id: "demo:grok", provider: .grok, name: "Personal", homePath: nil, usesCurrentHome: true),
+            AccountProfile(id: "demo:kimi", provider: .kimi, name: "Personal", homePath: nil, usesCurrentHome: true),
         ]
         let now = Date()
         let demoUsage: [String: UsageState] = [
@@ -476,10 +518,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             demoProfiles[3].id: .stale(ProviderUsage(windows: [
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 92, resetsAt: now.addingTimeInterval(172_800), durationMinutes: 10_080),
             ], fetchedAt: now.addingTimeInterval(-900)), "Offline"),
+            demoProfiles[4].id: .fresh(ProviderUsage(windows: [
+                UsageWindow(label: "5 hours", shortLabel: "5h", usedPercent: 18, resetsAt: now.addingTimeInterval(8_400), durationMinutes: 300),
+                UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 33, resetsAt: now.addingTimeInterval(345_600), durationMinutes: 10_080),
+            ], fetchedAt: now)),
         ]
         let liveProof = ProcessInfo.processInfo.environment["DEBUG_LIVE_SHOOT"] == "1"
         let proofProfiles = liveProof ? AccountStore.accounts() : demoProfiles
-        let proofUsage = liveProof ? UsageCache.initialStates(proofProfiles) : demoUsage
+        let proofUsage = liveProof ? self.usage : demoUsage
         let proofActiveClaude = liveProof ? AccountStore.activeClaudeAccount() : demoProfiles.first?.name
 
         func bitmap(size: NSSize, appearance: NSAppearance.Name, background: NSColor,
