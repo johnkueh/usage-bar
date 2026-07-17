@@ -13,7 +13,7 @@
 
 - **Four providers, one menu.** Claude Code shows its 5-hour and weekly windows, Codex shows every window its CLI returns, Grok Build shows its weekly limit, and Kimi Code shows its quota windows.
 - **Claude account switching.** Save multiple Anthropic logins and click a Claude row to switch. Only the active Claude account gets a checkmark.
-- **Usage-only Codex, Grok, and Kimi accounts.** Add the current CLI login or sign in to another isolated account. Usage Bar reads their limits without changing which account either CLI uses.
+- **Usage-only Codex, Grok, and Kimi accounts.** Add the current app or CLI login, or sign in to another isolated account. Usage Bar reads their limits without changing which account each provider uses.
 - **Native and quiet.** AppKit menu, automatic light and dark mode, five-minute refreshes, wake refreshes, and no Dock icon.
 - **Updates in place.** Usage Bar checks daily for signed updates and can install them without another drag-and-drop install.
 - **No autopilot.** Usage Bar never switches accounts on its own.
@@ -31,7 +31,7 @@
 4. Look in the **menu bar** at the top-right of the screen — there is **no Dock icon**. First launch shows a **Usage** label and a short welcome dialog.
 5. Click **Usage**, then **Add account…** to connect Claude Code, Codex, Grok, or Kimi.
 
-The downloaded app is Developer ID signed and notarized by Apple. Usage Bar itself has no package-manager dependencies. Install the Claude Code, Codex, Grok, or Kimi CLI only for the providers you want to monitor.
+The downloaded app is Developer ID signed and notarized by Apple. Usage Bar itself has no package-manager dependencies. Codex works with the ChatGPT or Codex desktop app as well as the CLI. Install the Claude Code, Grok, or Kimi CLI only for those providers.
 
 ## Accounts
 
@@ -46,7 +46,7 @@ Removing Codex, Grok, or Kimi from Usage Bar leaves the CLI login files alone. R
 Usage refreshes every five minutes, when the menu opens, after wake, and with ⌘R. If a provider cannot refresh, Usage Bar keeps the last good value and marks it as stale.
 
 - Claude reads Anthropic's OAuth usage endpoint and refreshes expired inactive snapshots in the background.
-- Codex uses the official `codex app-server` `account/rateLimits/read` method.
+- Codex uses the official `codex app-server` `account/rateLimits/read` method from the desktop app or CLI.
 - Grok opens its built-in `/usage show` view in a private pseudo-terminal and reads the weekly meter.
 - Kimi reads the official Kimi Code `/usages` API with the OAuth token or API key the CLI already stores.
 

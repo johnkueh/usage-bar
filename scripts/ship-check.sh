@@ -11,6 +11,11 @@ xcrun swiftc -typecheck -F vendor Sources/*.swift
 xcrun swiftc Sources/Models.swift Sources/Usage.swift Tests/UsageParserTests.swift \
   -o "${TMPDIR:-/tmp}/usage-bar-parser-tests"
 "${TMPDIR:-/tmp}/usage-bar-parser-tests"
+xcrun swiftc Sources/Models.swift Sources/Usage.swift Sources/Store.swift Tests/AccountStoreTests.swift \
+  -o "${TMPDIR:-/tmp}/usage-bar-account-store-tests"
+"${TMPDIR:-/tmp}/usage-bar-account-store-tests"
+xcrun swiftc Sources/Models.swift Sources/Usage.swift Sources/Store.swift Tests/LiveProviderProbe.swift \
+  -o "${TMPDIR:-/tmp}/usage-bar-live-provider-probe"
 BUILD_DIR="${TMPDIR:-/tmp}/usage-bar-build" INSTALL=0 ./build.sh
 codesign --verify --deep --strict "${TMPDIR:-/tmp}/usage-bar-build/Usage Bar.app"
 file "${TMPDIR:-/tmp}/usage-bar-build/Usage Bar.app/Contents/MacOS/UsageBar" | grep -q arm64

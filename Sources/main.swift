@@ -571,7 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ($0.id, Render.accountTitle(profile: $0, state: proofUsage[$0.id]))
             })
             let rowHeight = rows.values.reduce(CGFloat(0)) { $0 + ceil($1.size().height) + 18 }
-            let totalHeight = rowHeight + 3 * 28 + 142
+            let totalHeight = rowHeight + 3 * 28 + 168
             bitmap(size: NSSize(width: width, height: totalHeight), appearance: appearance,
                    background: background, draw: { rect in
                 var y = rect.height - 26
@@ -591,17 +591,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }
                 NSColor.separatorColor.setFill()
-                NSRect(x: 0, y: 122, width: width, height: 1).fill()
+                NSRect(x: 0, y: 148, width: width, height: 1).fill()
                 let footerAttributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
                 ]
                 NSAttributedString(string: "Add account…", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 94))
+                    .draw(at: NSPoint(x: 16, y: 120))
                 NSAttributedString(string: "Refresh all", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 68))
+                    .draw(at: NSPoint(x: 16, y: 94))
                 NSAttributedString(string: "Manage accounts", attributes: footerAttributes)
-                    .draw(at: NSPoint(x: 16, y: 42))
+                    .draw(at: NSPoint(x: 16, y: 68))
                 NSAttributedString(string: "✓   Launch at login", attributes: footerAttributes)
+                    .draw(at: NSPoint(x: 16, y: 42))
+                NSAttributedString(string: "Check for Updates…", attributes: footerAttributes)
                     .draw(at: NSPoint(x: 16, y: 16))
             }, path: "/tmp/usage-bar-menu-\(suffix).png")
         }

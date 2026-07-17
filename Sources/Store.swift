@@ -123,15 +123,34 @@ enum AccountStore {
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
+    static func executableCandidates(_ name: String, home: String,
+                                     applicationRoots: [String]) -> [String] {
+        switch name {
+        case "codex":
+            let commandLine = ["\(home)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+            let desktop = applicationRoots.flatMap { root in
+                [
+                    "\(root)/ChatGPT.app/Contents/Resources/codex",
+                    "\(root)/Codex.app/Contents/Resources/codex",
+                    "\(root)/Codex.app/Contents/MacOS/Codex",
+                    "\(root)/Codex.app/Contents/MacOS/codex",
+                ]
+            }
+            return commandLine + desktop
+        case "grok":
+            return ["\(home)/.grok/bin/grok", "\(home)/.local/bin/grok", "/opt/homebrew/bin/grok"]
+        case "kimi":
+            return ["\(home)/.kimi-code/bin/kimi", "\(home)/.local/bin/kimi",
+                    "/opt/homebrew/bin/kimi", "/usr/local/bin/kimi"]
+        default:
+            return []
+        }
+    }
+
     static func executable(_ name: String) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates: [String]
-        switch name {
-        case "codex": candidates = ["\(home)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
-        case "grok": candidates = ["\(home)/.grok/bin/grok", "\(home)/.local/bin/grok", "/opt/homebrew/bin/grok"]
-        case "kimi": candidates = ["\(home)/.kimi-code/bin/kimi", "\(home)/.local/bin/kimi", "/opt/homebrew/bin/kimi", "/usr/local/bin/kimi"]
-        default: candidates = []
-        }
+        let candidates = executableCandidates(name, home: home,
+            applicationRoots: ["\(home)/Applications", "/Applications"])
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
@@ -142,18 +161,27 @@ enum AccountStore {
         return status == 0 && !blob.isEmpty ? blob : nil
     }
 
-    static func claudeToken(for name: String) -> String? {
-        let blob: String?
-        if name == activeClaudeAccount() {
-            blob = liveClaudeCredential()
-        } else {
-            blob = try? String(contentsOf: claudeDir.appendingPathComponent(".cred-\(name)"), encoding: .utf8)
-        }
+    static func claudeAccessToken(in blob: String?) -> String? {
         guard let blob, let data = blob.data(using: .utf8),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty else { return nil }
         return token
+    }
+
+    static func preferredClaudeToken(isActive: Bool, liveCredential: String?,
+                                     savedCredential: String?) -> String? {
+        if isActive, let token = claudeAccessToken(in: liveCredential) { return token }
+        return claudeAccessToken(in: savedCredential)
+    }
+
+    static func claudeToken(for name: String) -> String? {
+        let saved = try? String(contentsOf: claudeDir.appendingPathComponent(".cred-\(name)"),
+                                encoding: .utf8)
+        let isActive = name == activeClaudeAccount()
+        return preferredClaudeToken(isActive: isActive,
+            liveCredential: isActive ? liveClaudeCredential() : nil,
+            savedCredential: saved)
     }
 
     static func kimiAPIKey(in config: String) -> String? {
@@ -224,7 +252,9 @@ enum ProviderClient {
     static func fetch(_ profile: AccountProfile) -> (ProviderUsage?, String) {
         switch profile.provider {
         case .claude:
-            guard let token = AccountStore.claudeToken(for: profile.name) else { return (nil, "No token") }
+            guard let token = AccountStore.claudeToken(for: profile.name) else {
+                return (nil, "Sign in to Claude Code again")
+            }
             return UsageAPI.fetchClaude(token: token)
         case .codex:
             return fetchCodex(profile)
@@ -246,9 +276,11 @@ enum ProviderClient {
         return environment
     }
 
-    private static func fetchCodex(_ profile: AccountProfile) -> (ProviderUsage?, String) {
+    static func fetchCodex(_ profile: AccountProfile, executable override: String? = nil) -> (ProviderUsage?, String) {
         guard AccountStore.isSignedIn(profile) else { return (nil, "Sign in to refresh") }
-        guard let codex = AccountStore.executable("codex") else { return (nil, "Codex CLI not found") }
+        guard let codex = override ?? AccountStore.executable("codex") else {
+            return (nil, "Open the Codex app or install its CLI")
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: codex)
         process.arguments = ["app-server", "--stdio"]

@@ -10,7 +10,10 @@ enum LiveProviderProbe {
         }
         let profile = AccountProfile(id: "probe:\(provider.rawValue)", provider: provider,
             name: "Current", homePath: AccountStore.defaultHome(provider).path, usesCurrentHome: true)
-        let (usage, error) = ProviderClient.fetch(profile)
+        let executable = CommandLine.arguments.dropFirst(2).first
+        let (usage, error) = provider == .codex && executable != nil
+            ? ProviderClient.fetchCodex(profile, executable: executable)
+            : ProviderClient.fetch(profile)
         guard let usage else {
             FileHandle.standardError.write(Data("\(provider.title): \(error)\n".utf8))
             exit(1)
