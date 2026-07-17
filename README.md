@@ -15,6 +15,7 @@
 - **Claude account switching.** Save multiple Anthropic logins and click a Claude row to switch. Only the active Claude account gets a checkmark.
 - **Usage-only Codex, Grok, and Kimi accounts.** Add the current CLI login or sign in to another isolated account. Usage Bar reads their limits without changing which account either CLI uses.
 - **Native and quiet.** AppKit menu, automatic light and dark mode, five-minute refreshes, wake refreshes, and no Dock icon.
+- **Updates in place.** Usage Bar checks daily for signed updates and can install them without another drag-and-drop install.
 - **No autopilot.** Usage Bar never switches accounts on its own.
 - **Local by default.** Account names and CLI-home paths stay on your Mac. Provider credentials remain in the files and Keychain entries their CLIs already manage.
 
@@ -49,6 +50,12 @@ Usage refreshes every five minutes, when the menu opens, after wake, and with ‚å
 - Grok opens its built-in `/usage show` view in a private pseudo-terminal and reads the weekly meter.
 - Kimi reads the official Kimi Code `/usages` API with the OAuth token or API key the CLI already stores.
 
+## App updates
+
+Usage Bar checks for updates once a day. To check immediately, open its menu and choose **Check for Updates‚Ä¶**. When a release is available, Usage Bar downloads it, verifies its Sparkle signature, replaces the installed app, and relaunches.
+
+Versions older than the first Sparkle-enabled release still need one final manual update: download the latest DMG, replace Usage Bar in Applications, and open it again. Later releases update in place.
+
 ## Build from source
 
 ```sh
@@ -61,7 +68,7 @@ Building requires macOS 13+ and the Xcode command line tools. `./build.sh` creat
 
 ## Release
 
-`./release.sh --dry-run` exercises the universal build, signing, and DMG chain locally. A real release reads Apple notarization credentials from an untracked `release.env`, signs with Developer ID, notarizes and staples both app and DMG, and writes stable and versioned artifacts to `dist/`.
+`./release.sh --dry-run` exercises the universal build, signing, DMG, Sparkle signature, and appcast chain locally. `./release.sh --set-version 2.0.2` increments the build number and creates a real release. It reads Apple notarization credentials and the exported Sparkle EdDSA key path from an untracked `release.env`, signs with Developer ID, notarizes and staples both app and DMG, and writes the versioned DMG, stable DMG, and `appcast.xml` to `dist/`. Upload all three files to the matching GitHub release; installed copies read the appcast and stable DMG from the latest release assets.
 
 ## Privacy
 

@@ -26,5 +26,13 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>John Kueh</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/johnkueh/usage-bar/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>hfHXGRGheU/qNraHb2QHUPe+pdAMmQdC8iU298KyDgo=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

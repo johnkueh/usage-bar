@@ -5,11 +5,32 @@ cd "$(dirname "$0")"
 [ -f release.env ] && source release.env
 
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+SET_VERSION=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    --set-version)
+      [ "$#" -gt 1 ] || { echo "--set-version needs a version" >&2; exit 2; }
+      SET_VERSION="$2"
+      shift
+      ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [ -n "$SET_VERSION" ]; then
+  CURRENT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Info.plist)"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SET_VERSION" Info.plist
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((CURRENT_BUILD + 1))" Info.plist
+fi
+
 APP="Usage Bar.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
 DMG_VERSIONED="Usage-Bar-$VERSION.dmg"
 DMG_STABLE="Usage-Bar.dmg"
+APPCAST="appcast.xml"
+DOWNLOAD_PREFIX="https://github.com/johnkueh/usage-bar/releases/latest/download/"
 RELEASE_BUILD="${TMPDIR:-/tmp}/usage-bar-release-build"
 APP_PATH="$RELEASE_BUILD/$APP"
 
@@ -52,4 +73,20 @@ if [ "$DRY_RUN" = 0 ]; then
   xcrun stapler validate "dist/$DMG_VERSIONED"
 fi
 cp "dist/$DMG_VERSIONED" "dist/$DMG_STABLE"
-echo "Release artifacts: dist/$DMG_VERSIONED and dist/$DMG_STABLE"
+
+FEED_STAGE="$(mktemp -d)"
+cp "dist/$DMG_STABLE" "$FEED_STAGE/"
+if [ -n "${SPARKLE_ED_KEY_FILE:-}" ]; then
+  [ -f "$SPARKLE_ED_KEY_FILE" ] || { echo "SPARKLE_ED_KEY_FILE does not exist" >&2; exit 1; }
+  vendor/bin/generate_appcast --ed-key-file "$SPARKLE_ED_KEY_FILE" \
+    --download-url-prefix "$DOWNLOAD_PREFIX" "$FEED_STAGE"
+else
+  vendor/bin/generate_appcast --download-url-prefix "$DOWNLOAD_PREFIX" "$FEED_STAGE"
+fi
+cp "$FEED_STAGE/$APPCAST" "dist/$APPCAST"
+rm -rf "$FEED_STAGE"
+codesign --verify --deep --strict "$APP_PATH"
+xmllint --noout "dist/$APPCAST"
+
+echo "Release artifacts: dist/$DMG_VERSIONED, dist/$DMG_STABLE, and dist/$APPCAST"
+echo "Upload all three to GitHub release v$VERSION."

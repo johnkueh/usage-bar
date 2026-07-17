@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         usage = UsageCache.initialStates(AccountStore.accounts())
         updateStatusButton()
         rebuildMenu()
+        Updater.shared.start()
         refresh()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             self?.showFirstRunWelcomeIfNeeded()
@@ -265,6 +266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launch.target = self
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launch)
+        let updates = NSMenuItem(title: "Check for Updates…",
+                                 action: #selector(checkForUpdates), keyEquivalent: "")
+        updates.target = self
+        menu.addItem(updates)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Usage Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -338,6 +343,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
 
     @objc func refreshNow() { refresh() }
+
+    @objc func checkForUpdates() { Updater.shared.checkForUpdates() }
 
     @objc func switchClaude(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,

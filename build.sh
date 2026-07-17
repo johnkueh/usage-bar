@@ -7,28 +7,48 @@ APP="Usage Bar.app"
 EXECUTABLE="UsageBar"
 BUILD="${BUILD_DIR:-build}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-${TMPDIR:-/tmp}/usage-bar-clang-cache}"
+export SWIFT_MODULE_CACHE_PATH="${SWIFT_MODULE_CACHE_PATH:-${TMPDIR:-/tmp}/usage-bar-swift-cache}"
+
+[ -d vendor/Sparkle.framework ] || ./fetch-sparkle.sh
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/$APP/Contents/MacOS"
 mkdir -p "$BUILD/$APP/Contents/Resources"
+mkdir -p "$BUILD/$APP/Contents/Frameworks"
 cp Info.plist "$BUILD/$APP/Contents/Info.plist"
 cp assets/AppIcon.icns "$BUILD/$APP/Contents/Resources/AppIcon.icns"
 cp bin/claude-account "$BUILD/$APP/Contents/Resources/claude-account"
+cp -R vendor/Sparkle.framework "$BUILD/$APP/Contents/Frameworks/"
 chmod +x "$BUILD/$APP/Contents/Resources/claude-account"
 
 for arch in arm64 x86_64; do
   xcrun swiftc -O -target "$arch-apple-macos13.0" Sources/*.swift \
+    -F vendor -framework Sparkle \
+    -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -o "$BUILD/$EXECUTABLE-$arch"
 done
 lipo -create "$BUILD/$EXECUTABLE-arm64" "$BUILD/$EXECUTABLE-x86_64" \
   -output "$BUILD/$APP/Contents/MacOS/$EXECUTABLE"
 rm "$BUILD/$EXECUTABLE-arm64" "$BUILD/$EXECUTABLE-x86_64"
 xattr -cr "$BUILD/$APP"
+
+FRAMEWORK="$BUILD/$APP/Contents/Frameworks/Sparkle.framework"
+FRAMEWORK_VERSION="$FRAMEWORK/Versions/B"
 if [ "$SIGN_IDENTITY" = "-" ]; then
-  codesign --force --sign - "$BUILD/$APP"
+  sign() { codesign --force --sign - "$1"; }
 else
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$BUILD/$APP"
+  sign() { codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$1"; }
 fi
+for item in \
+  "$FRAMEWORK_VERSION/XPCServices/Installer.xpc" \
+  "$FRAMEWORK_VERSION/XPCServices/Downloader.xpc" \
+  "$FRAMEWORK_VERSION/Autoupdate" \
+  "$FRAMEWORK_VERSION/Updater.app"; do
+  [ ! -e "$item" ] || sign "$item"
+done
+sign "$FRAMEWORK"
+sign "$BUILD/$APP"
 
 if [ "${INSTALL:-1}" = "1" ]; then
   mkdir -p "$HOME/Applications"

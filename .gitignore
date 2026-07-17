@@ -1,4 +1,5 @@
 build/
 dist/
+vendor/
 release.env
 .DS_Store
