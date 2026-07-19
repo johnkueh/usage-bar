@@ -19,10 +19,10 @@ enum Render {
                      xRadius: radius, yRadius: radius).fill()
     }
 
-    static func countdown(_ date: Date?) -> String {
+    static func countdown(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return "" }
-        let difference = Int(date.timeIntervalSinceNow)
-        if difference <= 0 { return "now" }
+        let difference = Int(date.timeIntervalSince(now))
+        if difference <= 0 { return "due" }
         if difference >= 86_400 { return "\((difference + 43_200) / 86_400)d" }
         if difference >= 1_800 { return "\((difference + 1_800) / 3_600)h" }
         return "\(max(1, difference / 60))m"
@@ -91,10 +91,11 @@ enum Render {
         return image
     }
 
-    static func resetText(_ date: Date?) -> String {
+    static func resetText(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return "" }
+        if date <= now { return "refresh due" }
         let formatter = DateFormatter()
-        let nearTerm = date.timeIntervalSinceNow < 22 * 3_600
+        let nearTerm = date.timeIntervalSince(now) < 22 * 3_600
         formatter.dateFormat = nearTerm ? "h:mma" : "EEE ha"
         return formatter.string(from: nearTerm ? date : date.addingTimeInterval(1_800)).lowercased()
     }
@@ -146,7 +147,7 @@ enum Render {
             }
             if case .stale(_, let reason) = state {
                 let note = reason == "Token expired" ? "Token expired — refreshing…" : reason
-                result.append(NSAttributedString(string: "\n\(note)", attributes: dim))
+                result.append(NSAttributedString(string: "\nCached data — \(note)", attributes: dim))
             }
         case .unavailable(let reason):
             result.append(NSAttributedString(string: reason, attributes: dim))

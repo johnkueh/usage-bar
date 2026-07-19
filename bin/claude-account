@@ -97,13 +97,11 @@ case "${1:-status}" in
     echo "snapshotted live credential as '$name' (active account marker set)"
     ;;
   refresh)
-    # Heartbeat: refresh an inactive account's OAuth access token WITHOUT a manual
-    # switch. For each target, briefly load its snapshot into the keychain, run a tiny
-    # `claude -p` (which makes Claude Code refresh the expired token via its refresh
-    # token and write the new credential back), re-snapshot the fresh credential, then
-    # restore the active account. The keychain is swapped only for the seconds claude -p
-    # runs; a lock guards against a concurrent switch/refresh. Default targets = all
-    # inactive accounts. This is what kills the "switch once to refresh" stale gauge.
+    # Heartbeat: refresh an account's OAuth access token without a manual switch. For
+    # an inactive target, briefly load its snapshot into the keychain. Then run a tiny
+    # `claude -p` (which makes Claude Code refresh the token), re-snapshot the fresh
+    # credential, and restore the active account. A lock guards against a concurrent
+    # switch/refresh. Default targets = all inactive accounts.
     shift || true
     claude_bin=$(resolve_claude) || die "claude binary not found (looked on PATH and ~/.local/bin)"
     [ -f "$MARKER" ] || die "active account unknown — run: claude-account snapshot <current-name> first"
@@ -127,9 +125,8 @@ case "${1:-status}" in
     save_snapshot "$active" "$live"   # preserve active's current (possibly refreshed) cred
 
     for name in $targets; do
-      [ "$name" = "$active" ] && { echo "skip '$name' (active — already live)"; continue; }
       [ -f "$DIR/.cred-$name" ] || { echo "skip '$name' (no snapshot)"; continue; }
-      write_live "$(cat "$DIR/.cred-$name")"
+      [ "$name" = "$active" ] || write_live "$(cat "$DIR/.cred-$name")"
       run_with_timeout 60 "$claude_bin" -p 'ok' --max-turns 1 >/dev/null 2>&1 || true
       newblob=$(read_live || true)
       # Only overwrite the snapshot if the refresh actually produced a credential

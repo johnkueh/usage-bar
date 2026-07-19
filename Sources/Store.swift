@@ -85,12 +85,13 @@ enum AccountStore {
     static func isSignedIn(_ profile: AccountProfile) -> Bool {
         guard let homePath = profile.homePath else { return false }
         if profile.provider == .kimi {
-            let home = URL(fileURLWithPath: homePath)
-            let oauth = home.appendingPathComponent("credentials/kimi-code.json")
-            let config = home.appendingPathComponent("config.toml")
-            if FileManager.default.fileExists(atPath: oauth.path) { return true }
-            guard let text = try? String(contentsOf: config, encoding: .utf8) else { return false }
-            return kimiAPIKey(in: text) != nil
+            return kimiHomes(for: profile).contains { home in
+                let oauth = home.appendingPathComponent("credentials/kimi-code.json")
+                let config = home.appendingPathComponent("config.toml")
+                if FileManager.default.fileExists(atPath: oauth.path) { return true }
+                guard let text = try? String(contentsOf: config, encoding: .utf8) else { return false }
+                return kimiAPIKey(in: text) != nil
+            }
         }
         let auth = URL(fileURLWithPath: homePath).appendingPathComponent("auth.json")
         return FileManager.default.fileExists(atPath: auth.path)
@@ -203,29 +204,157 @@ enum AccountStore {
         return nil
     }
 
-    static func kimiToken(for profile: AccountProfile) -> String? {
-        guard let homePath = profile.homePath else { return nil }
-        let home = URL(fileURLWithPath: homePath)
+    struct KimiOAuthCredential: Codable, Equatable {
+        let accessToken: String
+        let refreshToken: String
+        let expiresAt: Double
+        let scope: String
+        let tokenType: String
+        let expiresIn: Double
 
-        // Prefer OAuth access token when available and not expired.
-        let oauthFile = home.appendingPathComponent("credentials/kimi-code.json")
-        if let data = try? Data(contentsOf: oauthFile),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let accessToken = json["access_token"] as? String,
-           let expiresAt = json["expires_at"] as? NSNumber,
-           expiresAt.doubleValue > Date().timeIntervalSince1970 + 60 {
-            return accessToken
+        enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token"
+            case refreshToken = "refresh_token"
+            case expiresAt = "expires_at"
+            case scope
+            case tokenType = "token_type"
+            case expiresIn = "expires_in"
         }
 
-        // Fall back to the API key configured for the kimi provider.
-        let configFile = home.appendingPathComponent("config.toml")
-        if let config = try? String(contentsOf: configFile, encoding: .utf8) {
-            if let key = kimiAPIKey(in: config), !key.isEmpty {
-                return key
+        init(accessToken: String, refreshToken: String, expiresAt: Double,
+             scope: String = "", tokenType: String = "Bearer", expiresIn: Double = 0) {
+            self.accessToken = accessToken
+            self.refreshToken = refreshToken
+            self.expiresAt = expiresAt
+            self.scope = scope
+            self.tokenType = tokenType
+            self.expiresIn = expiresIn
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            accessToken = try values.decodeIfPresent(String.self, forKey: .accessToken) ?? ""
+            refreshToken = try values.decodeIfPresent(String.self, forKey: .refreshToken) ?? ""
+            expiresAt = try values.decodeIfPresent(Double.self, forKey: .expiresAt) ?? 0
+            scope = try values.decodeIfPresent(String.self, forKey: .scope) ?? ""
+            tokenType = try values.decodeIfPresent(String.self, forKey: .tokenType) ?? "Bearer"
+            expiresIn = try values.decodeIfPresent(Double.self, forKey: .expiresIn) ?? 0
+        }
+    }
+
+    static func kimiHomes(for profile: AccountProfile, userHome: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
+        guard let homePath = profile.homePath else { return [] }
+        var homes: [URL] = []
+        if profile.usesCurrentHome {
+            homes.append(userHome.appendingPathComponent(".kimi-code"))
+        }
+        homes.append(URL(fileURLWithPath: homePath))
+        if profile.usesCurrentHome { homes.append(userHome.appendingPathComponent(".kimi")) }
+        var seen = Set<String>()
+        return homes.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    static func readKimiCredential(at file: URL) -> KimiOAuthCredential? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        return try? JSONDecoder().decode(KimiOAuthCredential.self, from: data)
+    }
+
+    static func usableKimiAccessToken(_ credential: KimiOAuthCredential,
+                                      now: Date = Date()) -> String? {
+        guard !credential.accessToken.isEmpty,
+              credential.expiresAt > now.timeIntervalSince1970 + 60 else { return nil }
+        return credential.accessToken
+    }
+
+    static func refreshedKimiCredential(from json: [String: Any], now: Date = Date()) -> KimiOAuthCredential? {
+        guard let accessToken = json["access_token"] as? String, !accessToken.isEmpty,
+              let refreshToken = json["refresh_token"] as? String, !refreshToken.isEmpty,
+              let expiresIn = (json["expires_in"] as? NSNumber)?.doubleValue,
+              expiresIn > 0 else { return nil }
+        return KimiOAuthCredential(accessToken: accessToken, refreshToken: refreshToken,
+            expiresAt: now.timeIntervalSince1970 + expiresIn,
+            scope: json["scope"] as? String ?? "",
+            tokenType: json["token_type"] as? String ?? "Bearer", expiresIn: expiresIn)
+    }
+
+    static func refreshKimiCredential(at file: URL, credential: KimiOAuthCredential,
+                                      now: Date = Date()) -> (String?, String) {
+        guard !credential.refreshToken.isEmpty else { return (nil, "Sign in to Kimi Code again") }
+        let oauthHost = ProcessInfo.processInfo.environment["KIMI_CODE_OAUTH_HOST"]
+            ?? ProcessInfo.processInfo.environment["KIMI_OAUTH_HOST"] ?? "https://auth.kimi.com"
+        guard let url = URL(string: oauthHost.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            + "/api/oauth/token") else { return (nil, "Kimi sign-in couldn’t refresh") }
+        var components = URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: "17e5f671-d194-4dfb-9706-5516cb48c098"),
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: credential.refreshToken),
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        var responseData: Data?
+        var status = 0
+        let finished = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            responseData = data
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            finished.signal()
+        }.resume()
+        _ = finished.wait(timeout: .now() + 20)
+
+        if status == 200, let responseData,
+           let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+           let refreshed = refreshedKimiCredential(from: json, now: now) {
+            // A Kimi process may have rotated the token while this request was in flight.
+            if let latest = readKimiCredential(at: file),
+               latest.refreshToken != credential.refreshToken,
+               let token = usableKimiAccessToken(latest, now: now) { return (token, "") }
+            do {
+                let encoded = try JSONEncoder().encode(refreshed)
+                try encoded.write(to: file, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                return (refreshed.accessToken, "")
+            } catch {
+                return (nil, "Kimi sign-in couldn’t be saved")
             }
         }
 
-        return nil
+        // If another process won a refresh-token rotation race, use its fresh token.
+        if let latest = readKimiCredential(at: file),
+           latest.refreshToken != credential.refreshToken,
+           let token = usableKimiAccessToken(latest, now: now) { return (token, "") }
+        if status == 401 || status == 403 { return (nil, "Sign in to Kimi Code again") }
+        return (nil, "Kimi sign-in couldn’t refresh")
+    }
+
+    static func kimiToken(for profile: AccountProfile) -> (String?, String) {
+        kimiToken(for: profile, now: Date(), refresher: refreshKimiCredential)
+    }
+
+    static func kimiToken(for profile: AccountProfile, now: Date,
+                          refresher: (URL, KimiOAuthCredential, Date) -> (String?, String)) -> (String?, String) {
+        let homes = kimiHomes(for: profile)
+        var refreshError = ""
+        for home in homes {
+            let oauthFile = home.appendingPathComponent("credentials/kimi-code.json")
+            guard let credential = readKimiCredential(at: oauthFile) else { continue }
+            if let token = usableKimiAccessToken(credential, now: now) { return (token, "") }
+            let result = refresher(oauthFile, credential, now)
+            if let token = result.0 { return (token, "") }
+            if !result.1.isEmpty { refreshError = result.1 }
+        }
+
+        for home in homes {
+            let configFile = home.appendingPathComponent("config.toml")
+            if let config = try? String(contentsOf: configFile, encoding: .utf8),
+               let key = kimiAPIKey(in: config), !key.isEmpty { return (key, "") }
+        }
+        return (nil, refreshError.isEmpty ? "Sign in to Kimi Code again" : refreshError)
     }
 
     static func switchClaude(to name: String) -> (Bool, String) {
@@ -271,6 +400,7 @@ enum ProviderClient {
         environment["PATH"] = "\(home)/.local/bin:\(home)/.grok/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         if let variable = profile.provider.homeVariable, let path = profile.homePath {
             environment[variable] = path
+            if profile.provider == .kimi { environment["KIMI_SHARE_DIR"] = path }
         }
         environment["TERM"] = "xterm-256color"
         return environment
@@ -387,9 +517,8 @@ enum ProviderClient {
 
     private static func fetchKimi(_ profile: AccountProfile) -> (ProviderUsage?, String) {
         guard AccountStore.isSignedIn(profile) else { return (nil, "Sign in to refresh") }
-        guard let token = AccountStore.kimiToken(for: profile) else {
-            return (nil, "No Kimi token found")
-        }
+        let (token, error) = AccountStore.kimiToken(for: profile)
+        guard let token else { return (nil, error) }
         return UsageAPI.fetchKimi(token: token)
     }
 }

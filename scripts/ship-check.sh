@@ -14,6 +14,9 @@ xcrun swiftc Sources/Models.swift Sources/Usage.swift Tests/UsageParserTests.swi
 xcrun swiftc Sources/Models.swift Sources/Usage.swift Sources/Store.swift Tests/AccountStoreTests.swift \
   -o "${TMPDIR:-/tmp}/usage-bar-account-store-tests"
 "${TMPDIR:-/tmp}/usage-bar-account-store-tests"
+xcrun swiftc Sources/Models.swift Sources/Render.swift Tests/RenderTests.swift \
+  -o "${TMPDIR:-/tmp}/usage-bar-render-tests"
+"${TMPDIR:-/tmp}/usage-bar-render-tests"
 xcrun swiftc Sources/Models.swift Sources/Usage.swift Sources/Store.swift Tests/LiveProviderProbe.swift \
   -o "${TMPDIR:-/tmp}/usage-bar-live-provider-probe"
 BUILD_DIR="${TMPDIR:-/tmp}/usage-bar-build" INSTALL=0 ./build.sh

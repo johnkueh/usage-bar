@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 } else {
                     result[profile.id] = self.fallback(profile.id, error)
-                    if profile.provider == .claude, error == "Token expired", profile.name != activeClaude {
+                    if profile.provider == .claude, error == "Token expired" {
                         expiredClaude.append(profile.name)
                     }
                 }
@@ -393,7 +393,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let isAuthenticated: Bool
         if provider == .kimi {
             let home = AccountStore.defaultHome(provider)
-            isAuthenticated = FileManager.default.fileExists(atPath: home.path) && AccountStore.executable("kimi") != nil
+            let current = AccountProfile(id: "kimi:current-login-check", provider: .kimi,
+                name: "Current", homePath: home.path, usesCurrentHome: true)
+            isAuthenticated = AccountStore.isSignedIn(current) && AccountStore.executable("kimi") != nil
         } else {
             let auth = AccountStore.defaultHome(provider).appendingPathComponent("auth.json")
             isAuthenticated = FileManager.default.fileExists(atPath: auth.path)
@@ -525,10 +527,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             demoProfiles[3].id: .stale(ProviderUsage(windows: [
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 92, resetsAt: now.addingTimeInterval(172_800), durationMinutes: 10_080),
             ], fetchedAt: now.addingTimeInterval(-900)), "Offline"),
-            demoProfiles[4].id: .fresh(ProviderUsage(windows: [
-                UsageWindow(label: "5 hours", shortLabel: "5h", usedPercent: 18, resetsAt: now.addingTimeInterval(8_400), durationMinutes: 300),
+            demoProfiles[4].id: .stale(ProviderUsage(windows: [
+                UsageWindow(label: "5 hours", shortLabel: "5h", usedPercent: 100, resetsAt: now.addingTimeInterval(-300), durationMinutes: 300),
                 UsageWindow(label: "Weekly", shortLabel: "W", usedPercent: 33, resetsAt: now.addingTimeInterval(345_600), durationMinutes: 10_080),
-            ], fetchedAt: now)),
+            ], fetchedAt: now.addingTimeInterval(-900)), "Sign in to Kimi Code again"),
         ]
         let liveProof = ProcessInfo.processInfo.environment["DEBUG_LIVE_SHOOT"] == "1"
         let proofProfiles = liveProof ? AccountStore.accounts() : demoProfiles

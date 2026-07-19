@@ -37,7 +37,7 @@ The downloaded app is Developer ID signed and notarized by Apple. Usage Bar itse
 
 Claude accounts use credential snapshots in `~/.claude`. Running Claude sessions keep their existing credential when you switch; new sessions and agents use the selected account.
 
-Codex, Grok, and Kimi accounts authenticate inside their existing `CODEX_HOME`, `GROK_HOME`, or `KIMI_HOME`. Usage Bar stores only account names and home paths in `~/.usage-bar/accounts.json`; it never copies rotating refresh tokens between accounts.
+Codex, Grok, and Kimi accounts authenticate inside their existing `CODEX_HOME`, `GROK_HOME`, or `KIMI_CODE_HOME`. Usage Bar stores only account names and home paths in `~/.usage-bar/accounts.json`; it never copies rotating refresh tokens between accounts.
 
 Removing Codex, Grok, or Kimi from Usage Bar leaves the CLI login files alone. Removing a Claude account deletes that account's local credential snapshot.
 
@@ -45,10 +45,10 @@ Removing Codex, Grok, or Kimi from Usage Bar leaves the CLI login files alone. R
 
 Usage refreshes every five minutes, when the menu opens, after wake, and with ⌘R. If a provider cannot refresh, Usage Bar keeps the last good value and marks it as stale.
 
-- Claude reads Anthropic's OAuth usage endpoint and refreshes expired inactive snapshots in the background.
+- Claude reads Anthropic's OAuth usage endpoint and refreshes expired account tokens in the background.
 - Codex uses the official `codex app-server` `account/rateLimits/read` method from the desktop app or CLI.
 - Grok opens its built-in `/usage show` view in a private pseudo-terminal and reads the weekly meter.
-- Kimi reads the official Kimi Code `/usages` API with the OAuth token or API key the CLI already stores.
+- Kimi reads the official Kimi Code `/usages` API and renews the OAuth token the CLI already stores.
 
 ## App updates
 
@@ -68,7 +68,7 @@ Building requires macOS 13+ and the Xcode command line tools. `./build.sh` creat
 
 ## Release
 
-`./release.sh --dry-run` exercises the universal build, signing, DMG, Sparkle signature, and appcast chain locally. `./release.sh --set-version 2.0.2` increments the build number and creates a real release. It reads Apple notarization credentials and the exported Sparkle EdDSA key path from an untracked `release.env`, signs with Developer ID, notarizes and staples both app and DMG, and writes the versioned DMG, stable DMG, and `appcast.xml` to `dist/`. Upload all three files to the matching GitHub release; installed copies read the appcast and stable DMG from the latest release assets.
+`./release.sh --dry-run` exercises the universal build, signing, DMG, Sparkle signature, and appcast chain locally. `./release.sh --set-version <version>` increments the build number and creates a real release. It reads Apple notarization credentials and the exported Sparkle EdDSA key path from an untracked `release.env`, signs with Developer ID, notarizes and staples both app and DMG, and writes the versioned DMG, stable DMG, and `appcast.xml` to `dist/`. Upload all three files to the matching GitHub release; installed copies read the appcast and stable DMG from the latest release assets.
 
 ## Privacy
 
