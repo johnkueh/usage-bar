@@ -29,7 +29,7 @@ enum Provider: String, Codable, CaseIterable {
         case .claude: return nil
         case .codex: return "CODEX_HOME"
         case .grok: return "GROK_HOME"
-        case .kimi: return "KIMI_HOME"
+        case .kimi: return "KIMI_CODE_HOME"
         }
     }
 }
