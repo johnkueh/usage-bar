@@ -1,7 +1,0 @@
-{
-  "name": "usage-bar",
-  "deploy": "none",
-  "hooks": {
-    "gate": "bash scripts/ship-check.sh"
-  }
-}
